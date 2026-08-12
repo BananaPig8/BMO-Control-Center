@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>BMO Control Center</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./vendor/xterm/xterm.css" />
+  <link rel="stylesheet" href="./vendor/codemirror/codemirror.css" />
+  <link rel="stylesheet" href="./vendor/codemirror/theme/material-darker.css" />
+  <link rel="stylesheet" href="./vendor/codemirror/addon/hint/show-hint.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="brand">
+        <div class="brand-logo" aria-hidden="true"><img class="bmo-mascot" src="./assets/bmo.gif" alt="" /></div>
+        <div>
+          <h1 id="brand-name">BMO OS</h1>
+          <p class="tagline" id="header-sub">Control Center · Inicio</p>
+        </div>
+      </div>
+      <div class="header-meta home-meta" id="weather" title="Clima Valladolid">
+        <div class="hw-top">
+          <span class="sun" id="weather-icon">☀</span>
+          <span id="clock">--:--</span>
+          <span id="weather-temp">--°</span>
+        </div>
+        <div class="hw-bot" id="date">— · Valladolid</div>
+      </div>
+    </header>
+
+    <main class="content">
+      <div id="view-inicio" class="app-view home-view">
+        <section class="home-hero" id="home-hero" aria-live="polite"></section>
+
+        <section class="section home-section">
+          <div class="section-head home-head">
+            <h2>MI-PC</h2>
+            <button type="button" class="home-link" id="home-open-mipc">Abrir dispositivo</button>
+          </div>
+          <div class="home-metrics" id="home-metrics"></div>
+        </section>
+
+        <section class="section home-section">
+          <div class="section-head home-head">
+            <h2>Servicios activos</h2>
+            <button type="button" class="home-link" id="home-open-services">Ver todos</button>
+          </div>
+          <div class="home-services" id="home-services"></div>
+        </section>
+
+        <section class="section home-section">
+          <div class="section-head home-head">
+            <h2>Otros dispositivos</h2>
+            <button type="button" class="home-link" id="home-open-devices">Gestionar</button>
+          </div>
+          <div class="home-others" id="home-others"></div>
+        </section>
+
+        <!-- Compat: nodos ocultos para código legado -->
+        <div hidden>
+          <span id="selected-label"></span>
+          <div id="metrics"></div>
+          <div id="info-row"></div>
+          <div id="devices"></div>
+          <div id="dots"></div>
+        </div>
+      </div>
+
+      <div id="view-servicios" class="app-view" hidden>
+        <section class="section">
+          <h2>SERVICIOS</h2>
+          <p class="tagline view-sub">Spotify, Docker, monitorización y más.</p>
+          <div class="services-grid" id="services-grid"></div>
+        </section>
+      </div>
+
+      <div id="view-sistema" class="app-view" hidden>
+        <section class="section">
+          <div class="perf-head">
+            <h2>Sistema</h2>
+            <span class="sys-protected"><span class="dot"></span>Protegido</span>
+          </div>
+
+          <div class="bmo-core-card">
+            <div class="bmo-core-top">
+              <div class="bmo-core-title"><span class="ico">⬡</span>BMO Core</div>
+              <div class="bmo-core-version" id="sys-core-version">—</div>
+            </div>
+            <div class="bmo-core-sub">Raspberry Pi OS · todos los componentes operativos</div>
+            <div class="bmo-core-stats">
+              <div><div class="v" id="sys-core-uptime">—</div><div class="l">Tiempo activo</div></div>
+              <div><div class="v" id="sys-core-alerts">—</div><div class="l">Estado actual</div></div>
+              <div><div class="v" id="sys-core-backup">—</div><div class="l">Última copia</div></div>
+            </div>
+          </div>
+
+          <div class="sys-section-head"><h3>Administración</h3></div>
+          <div class="sys-grid-2">
+            <button type="button" class="sys-icon-card" data-sys-open="plugins">
+              <span class="sic-ico sic-purple">🧩</span>
+              <span class="sic-title">Plugins</span>
+              <span class="sic-sub" id="sys-plugins-sub">Instalados · activos</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="marketplace">
+              <span class="sic-ico sic-blue">🏬</span>
+              <span class="sic-title">Marketplace</span>
+              <span class="sic-sub">Catálogo de plugins</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="permisos">
+              <span class="sic-ico sic-green">🛡️</span>
+              <span class="sic-title">Permisos</span>
+              <span class="sic-sub">Políticas y accesos</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="usuarios">
+              <span class="sic-ico sic-gray">👤</span>
+              <span class="sic-title">Usuarios</span>
+              <span class="sic-sub">Acceso al sistema</span>
+            </button>
+          </div>
+
+          <div class="sys-section-head"><h3>Mantenimiento</h3></div>
+          <div class="sys-grid-2">
+            <button type="button" class="sys-icon-card" data-sys-open="registros">
+              <span class="sic-ico sic-blue">📄</span>
+              <span class="sic-title">Registros</span>
+              <span class="sic-sub">Logs por plugin</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="backup">
+              <span class="sic-ico sic-green">🗄️</span>
+              <span class="sic-title">Copia de seguridad</span>
+              <span class="sic-sub" id="sys-backup-sub">Docker backups</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="updates">
+              <span class="sic-ico sic-amber">🔄</span>
+              <span class="sic-title">Actualizaciones</span>
+              <span class="sic-sub">Docker updates</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="monitor">
+              <span class="sic-ico sic-purple">📈</span>
+              <span class="sic-title">Monitorización</span>
+              <span class="sic-sub">Prometheus · Grafana</span>
+            </button>
+          </div>
+
+          <div class="sys-section-head"><h3>Automatizaciones</h3></div>
+          <div class="sys-grid-2">
+            <button type="button" class="sys-icon-card" data-sys-open="escenas">
+              <span class="sic-ico sic-purple">🎬</span>
+              <span class="sic-title">Escenas</span>
+              <span class="sic-sub" id="sys-scenes-sub">Acciones en un toque</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="automatizaciones">
+              <span class="sic-ico sic-amber">🤖</span>
+              <span class="sic-title">Automatizaciones</span>
+              <span class="sic-sub" id="sys-automations-sub">Disparadas por eventos</span>
+            </button>
+          </div>
+
+          <div class="sys-section-head"><h3>Actividad</h3></div>
+          <div class="sys-grid-2">
+            <button type="button" class="sys-icon-card" data-sys-open="estado">
+              <span class="sic-ico sic-green">🧠</span>
+              <span class="sic-title">Estado BMO</span>
+              <span class="sic-sub">Todo el sistema, de un vistazo</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="perf">
+              <span class="sic-ico sic-purple">⚡</span>
+              <span class="sic-title">Rendimiento</span>
+              <span class="sic-sub">CPU · RAM · Docker · MI-PC</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="alerts">
+              <span class="sic-ico sic-amber">🚨</span>
+              <span class="sic-title">Alertas</span>
+              <span class="sic-sub">Reglas · Canales · Historial</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="events">
+              <span class="sic-ico sic-blue">📡</span>
+              <span class="sic-title">Eventos</span>
+              <span class="sic-sub">Event Center · Historial</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="actividad">
+              <span class="sic-ico sic-green">📋</span>
+              <span class="sic-title">Actividad</span>
+              <span class="sic-sub">Qué ha pasado y cuándo</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="tareas">
+              <span class="sic-ico sic-blue">⏳</span>
+              <span class="sic-title">Tareas</span>
+              <span class="sic-sub">Operaciones largas en curso</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="health">
+              <span class="sic-ico sic-green">🩺</span>
+              <span class="sic-title">Salud BMO</span>
+              <span class="sic-sub">BMO se comprueba a sí mismo</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="maintenance">
+              <span class="sic-ico sic-amber">🛠️</span>
+              <span class="sic-title">Mantenimiento</span>
+              <span class="sic-sub">Pausa automatizaciones para manipular hardware</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="settings">
+              <span class="sic-ico sic-purple">⚙️</span>
+              <span class="sic-title">Configuración</span>
+              <span class="sic-sub">General · Sistema · Seguridad · Red</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="history">
+              <span class="sic-ico sic-gray">📈</span>
+              <span class="sic-title">Históricos</span>
+              <span class="sic-sub">Próximamente</span>
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <div id="view-dispositivos" class="app-view" hidden>
+        <section class="section">
+          <div class="perf-head">
+            <h2>Dispositivos</h2>
+          </div>
+          <div id="devices-body" class="perf-body"></div>
+        </section>
+      </div>
+    </main>
+
+    <nav class="nav" aria-label="Principal">
+      <button class="nav-item active" data-nav="inicio" type="button">
+        <span class="nav-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5z"/></svg>
+        </span>
+        <span>Inicio</span>
+      </button>
+      <button class="nav-item" data-nav="servicios" type="button">
+        <span class="nav-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7.5 12 12l8-4.5L12 3z"/><path d="M4 12.5 12 17l8-4.5"/><path d="M4 16.5 12 21l8-4.5"/></svg>
+        </span>
+        <span>Servicios</span>
+      </button>
+      <button class="nav-item" data-nav="sistema" type="button">
+        <span class="nav-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.4 5.4l1.7 1.7M16.9 16.9l1.7 1.7M18.6 5.4l-1.7 1.7M7.1 16.9l-1.7 1.7"/></svg>
+          <span class="nav-badge" id="nav-badge-sistema" hidden>0</span>
+        </span>
+        <span>Sistema</span>
+      </button>
+      <button class="nav-item" data-nav="dispositivos" type="button">
+        <span class="nav-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="18" rx="2.2"/><path d="M11 18h2"/></svg>
+        </span>
+        <span>Dispositivos</span>
+      </button>
+    </nav>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+  <div id="app-frame" class="app-frame" hidden>
+    <div class="app-frame-bar">
+      <button type="button" id="app-frame-back">← Volver a BMO</button>
+      <span id="app-frame-title">Portainer</span>
+    </div>
+    <iframe id="app-frame-iframe" title="Servicio"></iframe>
+  </div>
+
+  <div id="config-panel" class="config-panel" hidden>
+    <div class="config-sheet">
+      <div class="config-head">
+        <button type="button" id="config-back">← Volver</button>
+        <h2 id="config-title">Configurar</h2>
+      </div>
+      <form id="config-form" class="config-form"></form>
+      <div id="config-errors" class="config-errors" hidden></div>
+      <div class="config-actions">
+        <button type="button" id="config-save" class="config-save">Guardar</button>
+        <button type="button" id="config-validate" class="config-btn">Validar</button>
+        <button type="button" id="config-reset" class="config-btn">Restablecer</button>
+        <button type="button" id="config-export" class="config-btn">Exportar</button>
+        <button type="button" id="config-import" class="config-btn">Importar</button>
+        <input type="file" id="config-import-file" accept="application/json,.json" hidden />
+      </div>
+    </div>
+  </div>
+
+  <div id="spotify-panel" class="spotify-panel" hidden>
+    <div class="spotify-sheet">
+      <div class="spotify-topbar">
+        <button type="button" id="spotify-back" class="sp-back-btn" aria-label="Volver">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6 9 12l6 6"/></svg>
+        </button>
+        <div class="sp-breadcrumb" aria-label="Ruta">
+          <span>Servicios</span>
+          <span class="sp-bc-sep">›</span>
+          <span class="sp-bc-current">Spotify</span>
+        </div>
+        <div class="sp-conn" id="spotify-conn"><span class="sp-conn-dot"></span> Conectado</div>
+      </div>
+      <div class="spotify-title-block">
+        <h1>Spotify</h1>
+        <p class="sp-oauth" id="spotify-oauth-line">OAuth <span class="on">activo</span></p>
+      </div>
+      <div id="spotify-body" class="spotify-body"></div>
+    </div>
+  </div>
+
+  <div id="docker-panel" class="docker-panel" hidden>
+    <div class="docker-sheet">
+      <div class="docker-head">
+        <button type="button" id="docker-back">← Volver</button>
+        <h2>Docker</h2>
+        <button type="button" id="docker-create-btn" class="docker-icon-btn" aria-label="Crear">＋</button>
+      </div>
+      <div class="docker-tabs" role="tablist">
+        <button type="button" class="docker-tab active" data-docker-tab="containers" role="tab">Container</button>
+        <button type="button" class="docker-tab" data-docker-tab="images" role="tab">Images</button>
+        <button type="button" class="docker-tab" data-docker-tab="volumes" role="tab">Volumes</button>
+        <button type="button" class="docker-tab" data-docker-tab="networks" role="tab">Networks</button>
+        <button type="button" class="docker-tab" data-docker-tab="compose" role="tab">Compose</button>
+        <button type="button" class="docker-tab" data-docker-tab="hub" role="tab">Docker Hub ⭐</button>
+        <button type="button" class="docker-tab" data-docker-tab="backup" role="tab">Backup</button>
+        <button type="button" class="docker-tab" data-docker-tab="updates" role="tab">Actualizaciones</button>
+        <button type="button" class="docker-tab" data-docker-tab="security" role="tab">Seguridad 🔒</button>
+      </div>
+      <div id="docker-body" class="docker-body"></div>
+    </div>
+  </div>
+
+
+
+  <div id="marketplace-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="marketplace-back">← Volver</button>
+        <h2>Marketplace</h2>
+      </div>
+      <div id="marketplace-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="sys-logs-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="sys-logs-back">← Volver</button>
+        <h2>Registros</h2>
+      </div>
+      <div id="sys-logs-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="sys-perms-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="sys-perms-back">← Volver</button>
+        <h2>Permisos</h2>
+      </div>
+      <div id="sys-perms-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="sys-users-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="sys-users-back">← Volver</button>
+        <h2>Usuarios</h2>
+      </div>
+      <div id="sys-users-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="scenes-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="scenes-back">← Volver</button>
+        <h2 id="scenes-title">Escenas</h2>
+      </div>
+      <div id="scenes-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="health-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="health-back">← Volver</button>
+        <h2>Salud BMO 🩺</h2>
+      </div>
+      <div id="health-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="settings-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="settings-back">← Volver</button>
+        <h2>Configuración ⚙️</h2>
+      </div>
+      <div id="settings-body" class="perf-body"></div>
+    </div>
+  </div>
+  <input type="file" id="settings-import-file" accept="application/json,.json" hidden />
+
+  <div id="maintenance-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="maintenance-back">← Volver</button>
+        <h2>Mantenimiento 🛠️</h2>
+      </div>
+      <div id="maintenance-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="tareas-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="tareas-back">← Volver</button>
+        <h2>Tareas ⏳</h2>
+      </div>
+      <div id="tareas-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="actividad-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="actividad-back">← Volver</button>
+        <h2>Actividad 📋</h2>
+      </div>
+      <div id="actividad-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="estado-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="estado-back">← Volver</button>
+        <h2>Estado BMO 🧠</h2>
+      </div>
+      <div id="estado-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="automations-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="automations-back">← Volver</button>
+        <h2 id="automations-title">Automatizaciones</h2>
+      </div>
+      <div id="automations-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="app-catalog-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="app-catalog-back">← Volver</button>
+        <h2>Catálogo de apps</h2>
+      </div>
+      <div id="app-catalog-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="device-history-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="device-history-back">← Volver</button>
+        <h2 id="device-history-title">Historial</h2>
+      </div>
+      <div id="device-history-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="power-confirm-panel" class="confirm-overlay" hidden>
+    <div class="confirm-card">
+      <h2 id="power-confirm-title">¿Confirmar acción?</h2>
+      <p id="power-confirm-msg" class="tagline"></p>
+      <div class="confirm-actions">
+        <button type="button" id="power-confirm-cancel" class="dk-btn ghost">Cancelar</button>
+        <button type="button" id="power-confirm-ok" class="dk-btn danger">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="perf-panel" class="perf-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="perf-back">← Volver</button>
+        <h2>Rendimiento</h2>
+        <button type="button" id="perf-monitor" class="perf-link-btn">Monitorización</button>
+        <button type="button" id="perf-plugins" class="perf-link-btn">Plugins</button>
+      </div>
+      <div id="perf-body" class="perf-body"></div>
+    </div>
+  </div>
+
+
+  <div id="monitor-panel" class="monitor-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="monitor-back">← Volver</button>
+        <h2>Monitorización</h2>
+        <button type="button" id="monitor-refresh" class="plugins-refresh" aria-label="Actualizar">⟳</button>
+      </div>
+      <div id="monitor-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  
+  
+  <div id="events-panel" class="events-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="events-back">← Volver</button>
+        <h2>Eventos 📡</h2>
+        <button type="button" id="events-refresh" class="plugins-refresh" aria-label="Actualizar">⟳</button>
+      </div>
+      <div class="events-filters" role="group" aria-label="Filtro nivel">
+        <button type="button" class="events-filter active" data-events-filter="all">Todos</button>
+        <button type="button" class="events-filter" data-events-filter="critical">Critical</button>
+        <button type="button" class="events-filter" data-events-filter="warning">Warning</button>
+        <button type="button" class="events-filter" data-events-filter="info">Info</button>
+      </div>
+      <div id="events-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="alerts-panel" class="alerts-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="alerts-back">← Volver</button>
+        <h2>Alertas 🚨</h2>
+        <button type="button" id="alerts-test" class="perf-link-btn">Probar</button>
+        <button type="button" id="alerts-refresh" class="plugins-refresh" aria-label="Actualizar">⟳</button>
+      </div>
+      <div class="alerts-tabs" role="tablist">
+        <button type="button" class="alerts-tab active" data-alerts-tab="active" role="tab">Activas</button>
+        <button type="button" class="alerts-tab" data-alerts-tab="history" role="tab">Historial</button>
+        <button type="button" class="alerts-tab" data-alerts-tab="rules" role="tab">Reglas</button>
+        <button type="button" class="alerts-tab" data-alerts-tab="channels" role="tab">Canales</button>
+      </div>
+      <div id="alerts-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="plugins-panel" class="plugins-panel" hidden>
+    <div class="plugins-sheet">
+      <div class="plugins-head">
+        <button type="button" id="plugins-back">← Volver</button>
+        <h2>Plugins</h2>
+        <button type="button" id="plugins-refresh" class="plugins-refresh" aria-label="Actualizar">⟳</button>
+      </div>
+      <div id="plugins-body" class="plugins-body"></div>
+    </div>
+  </div>
+
+  <div id="plugin-perms-panel" class="plugin-perms-panel" hidden>
+    <div class="plugin-perms-sheet">
+      <div class="plugins-head">
+        <button type="button" id="plugin-perms-back">← Volver</button>
+        <h2 id="plugin-perms-title">Permisos</h2>
+      </div>
+      <div id="plugin-perms-body" class="plugin-perms-body"></div>
+      <button type="button" id="plugin-perms-save" class="config-save" hidden>Guardar permisos</button>
+    </div>
+  </div>
+
+  <div id="plugin-consent-panel" class="plugin-consent-panel" hidden>
+    <div class="plugin-consent-sheet">
+      <div class="plugins-head">
+        <h2 id="plugin-consent-title">Permisos</h2>
+      </div>
+      <p id="plugin-consent-intro" class="consent-intro"></p>
+      <div id="plugin-consent-body" class="plugin-perms-body"></div>
+      <div class="consent-actions">
+        <button type="button" id="plugin-consent-accept" class="config-save">Aceptar</button>
+        <button type="button" id="plugin-consent-deny" class="config-btn">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="plugin-logs-panel" class="plugin-logs-panel" hidden>
+    <div class="plugin-logs-sheet">
+      <div class="plugins-head">
+        <button type="button" id="plugin-logs-back">← Volver</button>
+        <h2 id="plugin-logs-title">Logs</h2>
+      </div>
+      <div class="logs-toolbar">
+        <select id="plugin-logs-filter" aria-label="Filtrar">
+          <option value="ALL">Todos</option>
+          <option value="INFO">INFO</option>
+          <option value="WARN">WARN</option>
+          <option value="ERROR">ERROR</option>
+          <option value="DEBUG">DEBUG</option>
+        </select>
+        <button type="button" id="plugin-logs-refresh" class="config-btn">Actualizar</button>
+        <button type="button" id="plugin-logs-copy" class="config-btn">Copiar</button>
+        <button type="button" id="plugin-logs-download" class="config-btn">Descargar</button>
+        <button type="button" id="plugin-logs-clear" class="config-btn danger-btn">Limpiar</button>
+      </div>
+      <div id="plugin-logs-body" class="plugin-logs-body"></div>
+    </div>
+  </div>
+
+  <script src="./vendor/xterm/xterm.js"></script>
+  <script src="./vendor/xterm/xterm-addon-fit.js"></script>
+  <script src="./vendor/codemirror/codemirror.js"></script>
+  <script src="./vendor/codemirror/mode/yaml/yaml.js"></script>
+  <script src="./vendor/codemirror/addon/hint/show-hint.js"></script>
+  <script src="./vendor/codemirror/addon/hint/compose-yaml-hint.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
