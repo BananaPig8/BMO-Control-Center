@@ -1,0 +1,10 @@
+{
+  "name": "bmo-control-center",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BMO Control Center UI for portrait kiosk",
+  "scripts": {
+    "dev": "npx --yes serve dist -l 5173",
+    "build": "node -e \"console.log('static UI, no build step')\""
+  }
+}
