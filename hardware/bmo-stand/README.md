@@ -6,17 +6,36 @@ misma funcionalidad, distinta estética.
 
 ## BOM (componentes ya enlazados)
 
+Actualizado 2026-08-20: la pantalla y la cámara originales se sustituyeron
+por hardware real distinto (la GeeekPi murió/se cambió, la cámara OV5647
+original se declaró muerta tras diagnóstico exhaustivo). Esta es la lista
+de piezas que hay puestas ahora mismo.
+
 | Pieza | Rol | Producto | Precio |
 |---|---|---|---|
 | Cerebro | Raspberry Pi 5 8GB | [amazon.es/dp/B0CK2FCG1K](https://www.amazon.es/dp/B0CK2FCG1K) | ~213€ |
-| Cara | GeeekPi 7" Touchscreen 1024x600 IPS | [amazon.es/dp/B0CKMDGFDR](https://www.amazon.es/dp/B0CKMDGFDR) | 62,99€ |
-| Ojo/visión | AZDelivery Cámara 5MP OV5647 | [amazon.es/dp/B01M6UCEM5](https://www.amazon.es/dp/B01M6UCEM5) | 2,16€ |
+| Cara | OSOYOO PiStudio — funda con pantalla táctil IPS DSI V4.0 de 7" (ventilador incluido) | [amazon.es/dp/B0D7YV7TD5](https://www.amazon.es/dp/B0D7YV7TD5) | — |
+| Ojo/visión | Freenove Cámara 5MP para Raspberry Pi 5 | [amazon.es/dp/B08Q34FKFY](https://www.amazon.es/dp/B08Q34FKFY) | ~13€ |
 | Voz/oídos | Yahboom AI Voice Interaction Module (USB-C) | [amazon.es/dp/B0F32NHQ6B](https://www.amazon.es/dp/B0F32NHQ6B) | 18,99€ |
-| Refrigeración | Raspberry Pi Active Cooler | [amazon.es/gp/product/B0CLXZBR5P](https://www.amazon.es/gp/product/B0CLXZBR5P) | — |
-| Conexión | Cable Micro HDMI→HDMI 0,3m | [amazon.es/dp/B0BP29QTJ6](https://www.amazon.es/dp/B0BP29QTJ6) | 11,49€ |
+
+**Refrigeración**: ya no es una pieza aparte — el ventilador viene
+incluido en el kit de la pantalla (OSOYOO PiStudio), sustituye al Active
+Cooler oficial del BOM anterior.
+
+**Conexión**: la pantalla es DSI directa (cable plano, no HDMI), así que
+el cable Micro-HDMI→HDMI del BOM anterior ya no aplica y se ha quitado.
 
 Pendiente: fuente de alimentación (la pantalla y la Pi5 la necesitan;
 no estaba en los enlaces enviados), y cable USB-C para el módulo de voz.
+
+⚠️ **Pendiente de decidir**: el kit OSOYOO PiStudio ya es una "funda"
+(trae su propia carcasa para pantalla+Pi). Las medidas de `common.scad`
+de abajo (`screen_w/h/thick`, viewport) siguen siendo las de la GeeekPi
+vieja — **no valen para este producto** y el diseño no debería imprimirse
+tal cual hasta aclarar: (a) si este stand impreso sustituye a la funda
+OSOYOO o va a montarse junto/alrededor de ella, y (b) las medidas reales
+de la OSOYOO (ficha de producto no encontrada con datos suficientes;
+hace falta medir la pieza física o encontrar su ficha técnica).
 
 ## Estructura de archivos
 
