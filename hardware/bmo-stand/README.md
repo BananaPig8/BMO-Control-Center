@@ -14,16 +14,24 @@ de piezas que hay puestas ahora mismo.
 | Pieza | Rol | Producto | Precio |
 |---|---|---|---|
 | Cerebro | Raspberry Pi 5 8GB | [amazon.es/dp/B0CK2FCG1K](https://www.amazon.es/dp/B0CK2FCG1K) | ~213€ |
-| Cara | OSOYOO PiStudio — funda con pantalla táctil IPS DSI V4.0 de 7" (ventilador incluido) | [amazon.es/dp/B0D7YV7TD5](https://www.amazon.es/dp/B0D7YV7TD5) | — |
+| Cara | OSOYOO PiStudio — funda con pantalla táctil IPS DSI V4.0 de 7" | [amazon.es/dp/B0D7YV7TD5](https://www.amazon.es/dp/B0D7YV7TD5) | 76,46€ |
 | Ojo/visión | Freenove Cámara 5MP para Raspberry Pi 5 | [amazon.es/dp/B08Q34FKFY](https://www.amazon.es/dp/B08Q34FKFY) | ~13€ |
 | Voz/oídos | Yahboom AI Voice Interaction Module (USB-C) | [amazon.es/dp/B0F32NHQ6B](https://www.amazon.es/dp/B0F32NHQ6B) | 18,99€ |
+| Refrigeración | Raspberry Pi Active Cooler | [amazon.es/gp/product/B0CLXZBR5P](https://www.amazon.es/gp/product/B0CLXZBR5P) | — |
 
-**Refrigeración**: ya no es una pieza aparte — el ventilador viene
-incluido en el kit de la pantalla (OSOYOO PiStudio), sustituye al Active
-Cooler oficial del BOM anterior.
+**Pantalla — según la ficha de producto (OSOYOO PiStudio, 7", DSI V4.0)**:
+resolución SVGA Wide, relación de aspecto 5:3, contraste 800:1–1000:1,
+ángulo de visión 170°. La caja incluye: 1 pantalla táctil DSI de 7", 1
+cable DSI FFC 15p-15p (Raspberry Pi 2/3/4), 1 cable DSI FPC 15p-1mm a
+22p-0,5mm (el que hace falta para Raspberry Pi 5), 1 funda para la
+pantalla, 1 soporte de ángulo ajustable, 1 destornillador, tornillos y
+manual. **No incluye** placa Raspberry Pi, Active Cooler, cámara CSI ni
+cable de cámara — el Active Cooler sigue siendo pieza aparte del BOM, la
+funda solo está pensada para dejarle hueco si lo llevas puesto.
 
-**Conexión**: la pantalla es DSI directa (cable plano, no HDMI), así que
-el cable Micro-HDMI→HDMI del BOM anterior ya no aplica y se ha quitado.
+**Conexión**: la pantalla es DSI directa (cable plano incluido, no
+HDMI), así que el cable Micro-HDMI→HDMI del BOM anterior ya no aplica y
+se ha quitado.
 
 Pendiente: fuente de alimentación (la pantalla y la Pi5 la necesitan;
 no estaba en los enlaces enviados), y cable USB-C para el módulo de voz.
@@ -34,8 +42,9 @@ de abajo (`screen_w/h/thick`, viewport) siguen siendo las de la GeeekPi
 vieja — **no valen para este producto** y el diseño no debería imprimirse
 tal cual hasta aclarar: (a) si este stand impreso sustituye a la funda
 OSOYOO o va a montarse junto/alrededor de ella, y (b) las medidas reales
-de la OSOYOO (ficha de producto no encontrada con datos suficientes;
-hace falta medir la pieza física o encontrar su ficha técnica).
+de la OSOYOO — la ficha de producto no publica dimensiones en mm/cm de
+la funda ni de la placa de la pantalla, así que hace falta medir la
+pieza física para actualizar `common.scad`.
 
 ## Estructura de archivos
 
