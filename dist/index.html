@@ -14,6 +14,233 @@
   <link rel="stylesheet" href="./vendor/codemirror/addon/hint/show-hint.css" />
 </head>
 <body>
+  <script>
+    (function () {
+      // 17/08/2026 - en el kiosco Firefox/Wayland de la pantalla DSI,
+      // innerWidth/100vw vienen inflados ~20px por encima del ancho fisico
+      // real (bug de negociacion de fullscreen). screen.width es fiable,
+      // asi que se expone como variable CSS para que el layout lo use en
+      // vez de 100vw/100%.
+      function setScreenW() {
+        document.documentElement.style.setProperty("--screen-w", screen.width + "px");
+      }
+      setScreenW();
+      window.addEventListener("resize", setScreenW);
+    })();
+  </script>
+  <script>
+    // 4.14.5 - Puerta de Modo Seguro: se comprueba lo antes posible (antes
+    // de que app.js haga nada), independiente del resto del arranque de la
+    // app - asi un fallo en app.js no puede impedir que se vea el aviso de
+    // Modo Seguro. /api/system/state no requiere clave (ver
+    // routes/system.js), asi que este script no necesita saber la API key.
+    // No se toca el flujo normal de app.js: si Modo Seguro esta apagado,
+    // este script no hace nada.
+    (function () {
+      fetch("/api/system/state")
+        .then((r) => r.json())
+        .then((s) => {
+          if (!s || !s.safeMode) return;
+          document.body.innerHTML =
+            '<div style="position:fixed;inset:0;z-index:99999;background:#1a1a2e;color:#eee;' +
+            'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+            'gap:16px;padding:24px;text-align:center;font-family:sans-serif;">' +
+            '<div style="font-size:48px">🩹</div>' +
+            '<h1 style="margin:0;font-size:20px">Modo Seguro activo</h1>' +
+            '<p style="margin:0;opacity:.8;max-width:320px;font-size:14px">' +
+            "BMO arrancó sin cargar plugins, probablemente por varios reinicios seguidos. " +
+            "El núcleo funciona con normalidad." +
+            "</p>" +
+            '<button id="safemode-exit-btn" style="padding:12px 24px;border-radius:10px;border:none;' +
+            'background:#4f8cff;color:#fff;font-size:15px;font-weight:600;">Salir de Modo Seguro</button>' +
+            "</div>";
+          document.getElementById("safemode-exit-btn").addEventListener("click", function (e) {
+            e.target.disabled = true;
+            e.target.textContent = "Reiniciando…";
+            fetch("/api/system/safe-mode/exit", { method: "POST" }).then(function () {
+              setTimeout(function () {
+                window.location.reload();
+              }, 6000);
+            });
+          });
+        })
+        .catch(function () {
+          /* si falla la comprobacion, se deja que app.js arranque con normalidad */
+        });
+    })();
+  </script>
+  <script>
+    // 4.17.3/4.17.4 - Puerta de sesion (login / configuracion inicial de
+    // cuenta). Mismo espiritu que la puerta de Modo Seguro de arriba:
+    // independiente de app.js, y ante CUALQUIER fallo (red, backend
+    // caido) se deja que app.js arranque con normalidad en vez de dejar
+    // el kiosco bloqueado - esto es una puerta de PRESENTACION delante
+    // del kiosco, la clave x-bmo-key sigue siendo lo que protege de
+    // verdad cada llamada real a la API (no se toca ni se sustituye).
+    (function () {
+      // 2026-08-18 - Desactivada a peticion explicita del usuario: el
+      // teclado en pantalla no se renderiza en este hardware con --kiosk
+      // (squeekboard queda tapado por el fullscreen real, ver
+      // hardware_specs.md). Se reactivo brevemente 2026-08-19 quitando
+      // --kiosk para dejarlo renderizar, y de hecho funciono y se creo la
+      // cuenta real - pero quitar --kiosk rompio otras cosas (barra de
+      // titulo imposible de quitar tras 6 intentos, arrastre tactil roto
+      // de nuevo) y se revirtio a --kiosk esa misma noche. La cuenta ya
+      // creada sigue intacta en el backend (users.json) - esto solo
+      // desactiva la PANTALLA de login/registro por si el teclado hiciera
+      // falta otra vez (dispositivo de confianza actual expira, se borra
+      // cookies, etc.) sin uno fisico a mano. Quitar este "return" cuando
+      // el teclado funcione de verdad sin sacrificar --kiosk.
+      return;
+      var SESSION_KEY = "bmo_session_token";
+      var DEVICE_KEY = "bmo_trusted_device_token";
+
+      function showScreen(mode) {
+        // No pisar la pantalla de Modo Seguro si ya tomo el control.
+        if (document.getElementById("safemode-exit-btn")) return;
+
+        var isSetup = mode === "setup";
+        var title = isSetup ? "Configura tu cuenta" : "Inicia sesión";
+        var subtitle = isSetup
+          ? "Primera vez en este BMO — crea la cuenta que lo protegerá."
+          : "Introduce tu usuario y contraseña.";
+        var btnLabel = isSetup ? "Crear cuenta" : "Entrar";
+        var inputStyle =
+          "padding:12px;border-radius:10px;border:1px solid #3a3a55;background:#22223a;color:#eee;font-size:15px";
+
+        document.body.innerHTML =
+          '<div id="auth-gate" style="position:fixed;inset:0;z-index:99998;background:#1a1a2e;color:#eee;' +
+          "display:flex;flex-direction:column;align-items:center;justify-content:center;" +
+          'gap:14px;padding:24px;text-align:center;font-family:sans-serif;">' +
+          '<div style="font-size:42px">🔒</div>' +
+          '<h1 style="margin:0;font-size:19px">' + title + "</h1>" +
+          '<p style="margin:0;opacity:.75;max-width:300px;font-size:13px">' + subtitle + "</p>" +
+          '<form id="auth-form" style="display:flex;flex-direction:column;gap:10px;width:260px;margin-top:6px">' +
+          '<input id="auth-username" type="text" autocomplete="username" placeholder="Usuario" style="' + inputStyle + '" />' +
+          '<input id="auth-password" type="password" autocomplete="' +
+          (isSetup ? "new-password" : "current-password") +
+          '" placeholder="Contraseña" style="' + inputStyle + '" />' +
+          (isSetup
+            ? '<input id="auth-password2" type="password" autocomplete="new-password" placeholder="Repite la contraseña" style="' +
+              inputStyle +
+              '" />'
+            : "") +
+          '<label style="display:flex;align-items:center;gap:8px;font-size:13px;opacity:.85;text-align:left;padding:2px">' +
+          '<input id="auth-trust" type="checkbox" checked style="width:16px;height:16px" /> Recordar este dispositivo</label>' +
+          '<button type="submit" id="auth-submit" style="padding:12px;border-radius:10px;border:none;' +
+          'background:#4f8cff;color:#fff;font-size:15px;font-weight:600;margin-top:4px">' + btnLabel + "</button>" +
+          '<p id="auth-error" style="color:#ff6b6b;font-size:13px;min-height:16px;margin:2px 0 0"></p>' +
+          "</form></div>";
+
+        document.getElementById("auth-form").addEventListener("submit", function (e) {
+          e.preventDefault();
+          var username = document.getElementById("auth-username").value.trim();
+          var password = document.getElementById("auth-password").value;
+          var trustDevice = document.getElementById("auth-trust").checked;
+          var errorEl = document.getElementById("auth-error");
+          var btn = document.getElementById("auth-submit");
+          errorEl.textContent = "";
+
+          if (isSetup) {
+            var password2 = document.getElementById("auth-password2").value;
+            if (password !== password2) {
+              errorEl.textContent = "Las contraseñas no coinciden";
+              return;
+            }
+            if (password.length < 8) {
+              errorEl.textContent = "La contraseña debe tener al menos 8 caracteres";
+              return;
+            }
+          }
+
+          btn.disabled = true;
+          btn.textContent = isSetup ? "Creando…" : "Entrando…";
+
+          fetch("/api/auth/" + (isSetup ? "setup" : "login"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username: username, password: password, trustDevice: trustDevice }),
+          })
+            .then(function (r) {
+              return r.json().then(function (data) {
+                return { ok: r.ok, data: data };
+              });
+            })
+            .then(function (res) {
+              if (!res.ok) {
+                errorEl.textContent = (res.data && res.data.error) || "Error al iniciar sesión";
+                btn.disabled = false;
+                btn.textContent = btnLabel;
+                return;
+              }
+              try {
+                sessionStorage.setItem(SESSION_KEY, res.data.token);
+                if (res.data.trustedDeviceToken) {
+                  localStorage.setItem(DEVICE_KEY, res.data.trustedDeviceToken);
+                }
+              } catch (_) {
+                /* almacenamiento no disponible - la sesion no persistira, pero no bloquea nada */
+              }
+              window.location.reload();
+            })
+            .catch(function () {
+              errorEl.textContent = "No se pudo conectar con BMO";
+              btn.disabled = false;
+              btn.textContent = btnLabel;
+            });
+        });
+      }
+
+      function verifyToken(token) {
+        if (!token) return Promise.resolve(false);
+        return fetch("/api/auth/me", { headers: { Authorization: "Bearer " + token } })
+          .then(function (r) {
+            return r.ok;
+          })
+          .catch(function () {
+            return false;
+          });
+      }
+
+      fetch("/api/system/state")
+        .then(function (r) {
+          return r.json();
+        })
+        .then(function (s) {
+          if (s && s.safeMode) return; // Modo Seguro se encarga de la pantalla
+
+          var deviceToken = null;
+          var sessionToken = null;
+          try {
+            deviceToken = localStorage.getItem(DEVICE_KEY);
+            sessionToken = sessionStorage.getItem(SESSION_KEY);
+          } catch (_) {
+            /* almacenamiento no disponible - se tratara como si no hubiera sesion */
+          }
+
+          // El dispositivo confiable manda si existe (sobrevive a
+          // reinicios del backend, a diferencia de la sesion normal).
+          return verifyToken(deviceToken).then(function (deviceOk) {
+            if (deviceOk) return;
+            return verifyToken(sessionToken).then(function (sessionOk) {
+              if (sessionOk) return;
+              return fetch("/api/auth/status")
+                .then(function (r) {
+                  return r.json();
+                })
+                .then(function (s2) {
+                  showScreen(s2 && s2.hasAnyUser ? "login" : "setup");
+                });
+            });
+          });
+        })
+        .catch(function () {
+          /* si falla cualquier comprobacion, se deja que app.js arranque
+             con normalidad - nunca bloquear el kiosco por un fallo de red */
+        });
+    })();
+  </script>
+  <div id="bg-layer" aria-hidden="true"></div>
   <div class="app">
     <header class="header">
       <div class="brand">
@@ -53,6 +280,14 @@
           <div class="home-services" id="home-services"></div>
         </section>
 
+        <section class="section home-section" id="home-scenes-section" hidden>
+          <div class="section-head home-head">
+            <h2>Escenas</h2>
+            <button type="button" class="home-link" id="home-open-scenes">Ver todas</button>
+          </div>
+          <div class="sys-grid-2" id="home-scenes"></div>
+        </section>
+
         <section class="section home-section">
           <div class="section-head home-head">
             <h2>Otros dispositivos</h2>
@@ -73,9 +308,16 @@
 
       <div id="view-servicios" class="app-view" hidden>
         <section class="section">
-          <h2>SERVICIOS</h2>
+          <div class="perf-head" style="padding:0 0 6px">
+            <h2 style="margin:0">SERVICIOS</h2>
+            <button type="button" id="services-reorder-btn" class="dk-btn ghost">Reordenar</button>
+          </div>
           <p class="tagline view-sub">Spotify, Docker, monitorización y más.</p>
-          <div class="services-grid" id="services-grid"></div>
+          <div class="services-pager" id="services-pager" hidden>
+            <div class="services-pages-track" id="services-pages-track"></div>
+          </div>
+          <div class="services-pager-dots" id="services-pager-dots" hidden></div>
+          <div class="services-grid" id="services-grid" hidden></div>
         </section>
       </div>
 
@@ -97,6 +339,39 @@
               <div><div class="v" id="sys-core-alerts">—</div><div class="l">Estado actual</div></div>
               <div><div class="v" id="sys-core-backup">—</div><div class="l">Última copia</div></div>
             </div>
+          </div>
+
+          <div class="sys-section-head"><h3>Inteligencia artificial</h3></div>
+          <div class="sys-grid-2">
+            <button type="button" class="sys-icon-card" data-sys-open="ai">
+              <span class="sic-ico sic-green">🤖</span>
+              <span class="sic-title">BMO AI</span>
+              <span class="sic-sub" id="sys-ai-sub">Pregunta y actúa con confirmación</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="gesturememe">
+              <span class="sic-ico sic-amber">🐱</span>
+              <span class="sic-title">Gato-Cam</span>
+              <span class="sic-sub">Haz un gesto, recibe un meme</span>
+            </button>
+          </div>
+
+          <div class="sys-section-head"><h3>Ecosistema</h3></div>
+          <div class="sys-grid-2">
+            <button type="button" class="sys-icon-card" data-sys-open="integrations">
+              <span class="sic-ico sic-blue">🔗</span>
+              <span class="sic-title">Integraciones</span>
+              <span class="sic-sub">Estado de servicios conectados</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="accounts">
+              <span class="sic-ico sic-green">👤</span>
+              <span class="sic-title">Cuentas</span>
+              <span class="sic-sub">Credenciales de servicios externos</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="publicapi">
+              <span class="sic-ico sic-purple">🌉</span>
+              <span class="sic-title">API pública</span>
+              <span class="sic-sub">Claves para tus proyectos (BMO Bridge)</span>
+            </button>
           </div>
 
           <div class="sys-section-head"><h3>Administración</h3></div>
@@ -163,6 +438,11 @@
 
           <div class="sys-section-head"><h3>Actividad</h3></div>
           <div class="sys-grid-2">
+            <button type="button" class="sys-icon-card" data-sys-open="quickmenu">
+              <span class="sic-ico sic-amber">⚡</span>
+              <span class="sic-title">Menú rápido</span>
+              <span class="sic-sub">Estado y escenas de un vistazo</span>
+            </button>
             <button type="button" class="sys-icon-card" data-sys-open="estado">
               <span class="sic-ico sic-green">🧠</span>
               <span class="sic-title">Estado BMO</span>
@@ -198,6 +478,16 @@
               <span class="sic-title">Salud BMO</span>
               <span class="sic-sub">BMO se comprueba a sí mismo</span>
             </button>
+            <button type="button" class="sys-icon-card" data-sys-open="recovery">
+              <span class="sic-ico sic-amber">🩹</span>
+              <span class="sic-title">Recovery Center</span>
+              <span class="sic-sub">Vigilancia, auto-recuperación, fallos</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="securitycenter">
+              <span class="sic-ico sic-amber">🛡️</span>
+              <span class="sic-title">Security Center</span>
+              <span class="sic-sub">Estado real por área, sin puntuación</span>
+            </button>
             <button type="button" class="sys-icon-card" data-sys-open="maintenance">
               <span class="sic-ico sic-amber">🛠️</span>
               <span class="sic-title">Mantenimiento</span>
@@ -214,6 +504,15 @@
               <span class="sic-sub">Próximamente</span>
             </button>
           </div>
+
+          <div class="sys-section-head"><h3>Personalización</h3></div>
+          <div class="sys-grid-2">
+            <button type="button" class="sys-icon-card" data-sys-open="personalizacion">
+              <span class="sic-ico sic-purple">🎨</span>
+              <span class="sic-title">Personalización</span>
+              <span class="sic-sub">Inicio · Widgets · Apariencia · Gestos</span>
+            </button>
+          </div>
         </section>
       </div>
 
@@ -227,43 +526,10 @@
       </div>
     </main>
 
-    <nav class="nav" aria-label="Principal">
-      <button class="nav-item active" data-nav="inicio" type="button">
-        <span class="nav-ico" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5z"/></svg>
-        </span>
-        <span>Inicio</span>
-      </button>
-      <button class="nav-item" data-nav="servicios" type="button">
-        <span class="nav-ico" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7.5 12 12l8-4.5L12 3z"/><path d="M4 12.5 12 17l8-4.5"/><path d="M4 16.5 12 21l8-4.5"/></svg>
-        </span>
-        <span>Servicios</span>
-      </button>
-      <button class="nav-item" data-nav="sistema" type="button">
-        <span class="nav-ico" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.4 5.4l1.7 1.7M16.9 16.9l1.7 1.7M18.6 5.4l-1.7 1.7M7.1 16.9l-1.7 1.7"/></svg>
-          <span class="nav-badge" id="nav-badge-sistema" hidden>0</span>
-        </span>
-        <span>Sistema</span>
-      </button>
-      <button class="nav-item" data-nav="dispositivos" type="button">
-        <span class="nav-ico" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="18" rx="2.2"/><path d="M11 18h2"/></svg>
-        </span>
-        <span>Dispositivos</span>
-      </button>
-    </nav>
+    <nav class="nav" id="app-nav" aria-label="Principal"></nav>
   </div>
 
   <div id="toast" class="toast" hidden></div>
-  <div id="app-frame" class="app-frame" hidden>
-    <div class="app-frame-bar">
-      <button type="button" id="app-frame-back">← Volver a BMO</button>
-      <span id="app-frame-title">Portainer</span>
-    </div>
-    <iframe id="app-frame-iframe" title="Servicio"></iframe>
-  </div>
 
   <div id="config-panel" class="config-panel" hidden>
     <div class="config-sheet">
@@ -339,6 +605,89 @@
     </div>
   </div>
 
+  <div id="integrations-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="integrations-back">← Volver</button>
+        <h2>🔗 Integraciones</h2>
+      </div>
+      <div id="integrations-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="accounts-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="accounts-back">← Volver</button>
+        <h2>👤 Cuentas</h2>
+      </div>
+      <div id="accounts-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="steam-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="steam-back">← Volver</button>
+        <h2>🎮 Steam</h2>
+      </div>
+      <div id="steam-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="recovery-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="recovery-back">← Volver</button>
+        <h2>🩹 Recovery Center</h2>
+      </div>
+      <div id="recovery-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="security-center-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="security-center-back">← Volver</button>
+        <h2>🛡️ Security Center</h2>
+      </div>
+      <div id="security-center-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="publicapi-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="publicapi-back">← Volver</button>
+        <h2>🌉 API pública</h2>
+      </div>
+      <div id="publicapi-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="ai-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="ai-back">← Volver</button>
+        <h2>🤖 BMO AI</h2>
+        <button type="button" id="ai-settings-btn" class="dk-btn ghost">⚙️</button>
+      </div>
+      <div id="ai-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="gesturememe-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="gesturememe-back">← Volver</button>
+        <h2>🐱 Gato-Cam</h2>
+      </div>
+      <div class="perf-body" style="padding:0;">
+        <iframe id="gesturememe-iframe" src="about:blank" title="Gato-Cam" allow="camera" style="width:100%; height:min(70vh, 620px); border:0; display:block; border-radius:12px; background:#000;"></iframe>
+      </div>
+    </div>
+  </div>
+
   <div id="sys-logs-panel" class="sys-sub-panel" hidden>
     <div class="perf-sheet">
       <div class="perf-head">
@@ -389,6 +738,16 @@
     </div>
   </div>
 
+  <div id="quick-menu-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="quick-menu-back">← Volver</button>
+        <h2>Menú rápido ⚡</h2>
+      </div>
+      <div id="quick-menu-body" class="perf-body"></div>
+    </div>
+  </div>
+
   <div id="settings-panel" class="sys-sub-panel" hidden>
     <div class="perf-sheet">
       <div class="perf-head">
@@ -399,6 +758,141 @@
     </div>
   </div>
   <input type="file" id="settings-import-file" accept="application/json,.json" hidden />
+
+  <div id="personalizacion-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="personalizacion-back">← Volver</button>
+        <h2>Personalización 🎨</h2>
+      </div>
+      <div id="personalizacion-body" class="perf-body">
+        <div class="sys-grid-2">
+          <button type="button" class="sys-icon-card" data-personalizacion-open="inicio">
+            <span class="sic-ico sic-blue">🏠</span>
+            <span class="sic-title">Inicio</span>
+            <span class="sic-sub">Qué aparece en la pantalla principal</span>
+          </button>
+          <button type="button" class="sys-icon-card" data-personalizacion-open="navegacion">
+            <span class="sic-ico sic-blue">📱</span>
+            <span class="sic-title">Navegación</span>
+            <span class="sic-sub">Páginas, dock y orden de servicios</span>
+          </button>
+          <button type="button" class="sys-icon-card" data-personalizacion-open="widgets">
+            <span class="sic-ico sic-green">🧩</span>
+            <span class="sic-title">Widgets</span>
+            <span class="sic-sub">Añadir, quitar, redimensionar</span>
+          </button>
+          <button type="button" class="sys-icon-card" data-personalizacion-open="apariencia">
+            <span class="sic-ico sic-purple">🎨</span>
+            <span class="sic-title">Apariencia</span>
+            <span class="sic-sub">Temas y fondo</span>
+          </button>
+          <button type="button" class="sys-icon-card" data-personalizacion-open="pantallas">
+            <span class="sic-ico sic-amber">🖥️</span>
+            <span class="sic-title">Pantallas</span>
+            <span class="sic-sub">Modo kiosco y perfiles de interfaz</span>
+          </button>
+          <button type="button" class="sys-icon-card" data-personalizacion-open="notificaciones">
+            <span class="sic-ico sic-gray">🔔</span>
+            <span class="sic-title">Notificaciones</span>
+            <span class="sic-sub">Próximamente</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="pantallas-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="pantallas-back">← Volver</button>
+        <h2>Pantallas 🖥️</h2>
+      </div>
+      <div id="pantallas-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="apariencia-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="apariencia-back">← Volver</button>
+        <h2>Apariencia 🎨</h2>
+      </div>
+      <div id="apariencia-body" class="perf-body"></div>
+    </div>
+  </div>
+  <input type="file" id="bg-image-file" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+
+  <div id="navegacion-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="navegacion-back">← Volver</button>
+        <h2>Navegación 📱</h2>
+      </div>
+      <div id="navegacion-body" class="perf-body">
+        <div class="plugin-card" style="margin-bottom:10px">
+          <strong>Páginas fijas</strong>
+          <p class="sic-sub">Inicio · Servicios · Sistema · Dispositivos</p>
+        </div>
+        <div class="plugin-card" style="margin-bottom:10px">
+          <strong>Páginas personalizadas</strong>
+          <div id="ui-pages-list" style="margin-top:8px"></div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <input type="text" id="ui-page-icon" placeholder="🎮" maxlength="4" style="width:56px;text-align:center;padding:8px;border-radius:8px;background:var(--panel-2);color:var(--fg);border:1px solid var(--border)" />
+            <input type="text" id="ui-page-name" placeholder="Nombre de la página" maxlength="40" style="flex:1;padding:8px;border-radius:8px;background:var(--panel-2);color:var(--fg);border:1px solid var(--border)" />
+          </div>
+          <button type="button" class="dk-btn" id="ui-page-add-btn" style="margin-top:8px">+ Nueva página</button>
+        </div>
+        <div class="plugin-card" style="margin-bottom:10px">
+          <strong>Dock inferior</strong>
+          <p class="sic-sub">Qué botones aparecen abajo, en qué orden y de qué tamaño</p>
+          <div id="ui-dock-list" style="margin-top:8px"></div>
+          <div style="display:flex;gap:8px;margin-top:10px" id="ui-dock-add-row"></div>
+          <div style="margin-top:12px">
+            <p class="sic-sub" style="margin-bottom:6px">Tamaño de icono</p>
+            <div style="display:flex;gap:8px" id="ui-dock-size-row">
+              <button type="button" class="dk-btn ghost" data-dock-size="pequeno">Pequeño</button>
+              <button type="button" class="dk-btn ghost" data-dock-size="normal">Normal</button>
+              <button type="button" class="dk-btn ghost" data-dock-size="grande">Grande</button>
+            </div>
+          </div>
+        </div>
+        <div class="plugin-card" style="margin-bottom:10px">
+          <strong>Perfiles de interfaz</strong>
+          <p class="sic-sub">Guarda el dock actual con un nombre y cámbialo con un toque (p.ej. Mesa vs Administración)</p>
+          <div id="ui-profiles-list" style="margin-top:8px"></div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <input type="text" id="ui-profile-icon" placeholder="🖥️" maxlength="4" style="width:56px;text-align:center;padding:8px;border-radius:8px;background:var(--panel-2);color:var(--fg);border:1px solid var(--border)" />
+            <input type="text" id="ui-profile-name" placeholder="Nombre del perfil" maxlength="40" style="flex:1;padding:8px;border-radius:8px;background:var(--panel-2);color:var(--fg);border:1px solid var(--border)" />
+          </div>
+          <button type="button" class="dk-btn" id="ui-profile-add-btn" style="margin-top:8px">Guardar dock actual como perfil</button>
+        </div>
+        <div class="plugin-card" style="margin-bottom:10px">
+          <strong>Restaurar</strong>
+          <p class="sic-sub">🏭 Vuelve al diseño de fábrica: dock, páginas, perfiles, fondo y tema. Esto no se puede deshacer.</p>
+          <button type="button" class="dk-btn danger" id="ui-restore-factory-btn" style="margin-top:8px">Restaurar diseño BMO</button>
+          <p class="sic-sub" style="margin-top:10px">📦 Para restaurar una copia de seguridad completa (incluye esta personalización), usa Sistema → Configuración → Importar configuración.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="custom-page-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="custom-page-back">← Volver</button>
+        <h2 id="custom-page-title" style="flex:1">Página</h2>
+        <button type="button" id="custom-page-manage-btn" class="dk-btn ghost">Gestionar</button>
+      </div>
+      <div class="perf-body">
+        <div id="custom-page-widgets" class="widgets-grid"></div>
+        <div id="custom-page-add-widget" hidden style="margin-top:14px">
+          <p class="sic-sub">Añadir widget:</p>
+          <div class="sys-grid-2" id="custom-page-widget-picker" style="margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div id="maintenance-panel" class="sys-sub-panel" hidden>
     <div class="perf-sheet">
@@ -547,7 +1041,10 @@
       <div class="plugins-head">
         <button type="button" id="plugins-back">← Volver</button>
         <h2>Plugins</h2>
-        <button type="button" id="plugins-refresh" class="plugins-refresh" aria-label="Actualizar">⟳</button>
+      </div>
+      <div class="plugins-filters">
+        <input type="text" id="plugins-search" placeholder="🔍 Buscar plugins..." autocomplete="off" />
+        <div id="plugins-category-chips" class="plugins-category-chips"></div>
       </div>
       <div id="plugins-body" class="plugins-body"></div>
     </div>

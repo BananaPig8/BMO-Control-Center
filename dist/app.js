@@ -143,6 +143,9 @@
     clock: document.getElementById("clock"),
     date: document.getElementById("date"),
     services: document.getElementById("services-grid"),
+    servicesPager: document.getElementById("services-pager"),
+    servicesPagesTrack: document.getElementById("services-pages-track"),
+    servicesPagerDots: document.getElementById("services-pager-dots"),
     metrics: document.getElementById("metrics"),
     info: document.getElementById("info-row"),
     devices: document.getElementById("devices"),
@@ -154,10 +157,6 @@
     homeOthers: document.getElementById("home-others"),
     headerSub: document.getElementById("header-sub"),
     toast: document.getElementById("toast"),
-    frame: document.getElementById("app-frame"),
-    frameIframe: document.getElementById("app-frame-iframe"),
-    frameTitle: document.getElementById("app-frame-title"),
-    frameBack: document.getElementById("app-frame-back"),
     configPanel: document.getElementById("config-panel"),
     configTitle: document.getElementById("config-title"),
     configForm: document.getElementById("config-form"),
@@ -180,7 +179,8 @@
     pluginsPanel: document.getElementById("plugins-panel"),
     pluginsBody: document.getElementById("plugins-body"),
     pluginsBack: document.getElementById("plugins-back"),
-    pluginsRefresh: document.getElementById("plugins-refresh"),
+    pluginsSearch: document.getElementById("plugins-search"),
+    pluginsCategoryChips: document.getElementById("plugins-category-chips"),
     permsPanel: document.getElementById("plugin-perms-panel"),
     permsBody: document.getElementById("plugin-perms-body"),
     permsTitle: document.getElementById("plugin-perms-title"),
@@ -278,13 +278,6 @@
       window.location.href = embed;
     }, 250);
   }
-
-  function closeServiceFrame() {
-    els.frame.hidden = true;
-    els.frameIframe.src = "about:blank";
-  }
-
-  els.frameBack?.addEventListener("click", closeServiceFrame);
 
   function toast(msg) {
     els.toast.hidden = false;
@@ -1062,7 +1055,6 @@
     closeAlertsPanel();
     closeEventsPanel();
     closeConfigPanel();
-    closeServiceFrame();
     setAppNav("servicios", { keepPanels: true });
     els.spotifyPanel.hidden = false;
     state.spotifyQueueData = null;
@@ -1074,7 +1066,14 @@
       toast(err.message || "Error Spotify");
     }
     stopSpotifyPolling();
-    state.spotifyTimer = setInterval(refreshSpotifyStatus, 4000);
+    // 18/08/2026 - Bajado de 4s a 8s: el refresh() general del dashboard
+    // (cada 10s, siempre activo, no solo con el panel abierto) YA pide
+    // /api/spotify/status para la tarjeta de servicio - con el panel
+    // abierto sumaban ~21 peticiones/min a la Web API de Spotify, lo
+    // bastante para agotar su cuota real y devolver 429 QUOTA_EXCEEDED de
+    // verdad (confirmado en logs: 342 llamadas en 10 min, muy por encima
+    // de lo esperado). Con 8s la carga combinada baja a ~13-14/min.
+    state.spotifyTimer = setInterval(refreshSpotifyStatus, 8000);
   }
 
   els.spotifyBack?.addEventListener("click", () => {
@@ -1449,7 +1448,7 @@
         return;
       }
       if (act === "delete") {
-        if (!askConfirm(`¿Eliminar backup ${id}?`)) return;
+        if (!(await askConfirm(`¿Eliminar backup ${id}?`))) return;
         await api(`/api/docker/backups/${encodeURIComponent(id)}`, {
           method: "DELETE",
         });
@@ -3234,7 +3233,7 @@
         return;
       }
       if (act === "remove") {
-        if (!askConfirm(`¿Remove stack ${s?.name || id}? (down + borrar archivos)`)) return;
+        if (!(await askConfirm(`¿Remove stack ${s?.name || id}? (down + borrar archivos)`))) return;
         const volumes = confirm("¿También borrar volúmenes (-v)? Normalmente No.");
         toast("Remove…");
         await api(
@@ -3398,11 +3397,11 @@
   }
 
   function confirmUntrustedImage(warning) {
-    if (!warning?.needsConfirm) return true;
+    if (!warning?.needsConfirm) return Promise.resolve(true);
     const msg =
       (warning.message || "Imagen desconocida ⚠️") +
       "\n\nPuede ser insegura (no oficial / pocos downloads).\n¿Continuar de todos modos?";
-    return window.confirm(msg);
+    return showConfirmModal({ title: "⚠️ Imagen no verificada", message: msg, confirmLabel: "Continuar" });
   }
 
   async function searchDockerHub(q) {
@@ -3451,10 +3450,10 @@
     }
   }
 
-  function startHubWizard(mode = "compose") {
+  async function startHubWizard(mode = "compose") {
     const d = state.dockerHubDetail;
     if (!d) return;
-    if (d.warning?.needsConfirm && !confirmUntrustedImage(d.warning)) {
+    if (d.warning?.needsConfirm && !(await confirmUntrustedImage(d.warning))) {
       toast("Instalación cancelada");
       return;
     }
@@ -3765,7 +3764,7 @@
       readStep();
       const detailWarn = state.dockerHubDetail?.warning;
       if (detailWarn?.needsConfirm && !state.dockerHubAllowUntrusted) {
-        if (!confirmUntrustedImage(detailWarn)) {
+        if (!(await confirmUntrustedImage(detailWarn))) {
           toast("Deploy cancelado");
           return;
         }
@@ -3827,7 +3826,7 @@
             needsConfirm: true,
             message: err.message,
           };
-          if (confirmUntrustedImage(warn)) {
+          if (await confirmUntrustedImage(warn)) {
             state.dockerHubAllowUntrusted = true;
             body.allowUntrusted = true;
             try {
@@ -4109,7 +4108,7 @@
           toast(`Protegido: ${c.name}. No se elimina desde la UI.`);
           return;
         }
-        if (!askConfirm(`¿Eliminar contenedor ${c?.name || id}?`)) return;
+        if (!(await askConfirm(`¿Eliminar contenedor ${c?.name || id}?`))) return;
         const force = c?.state === "running";
         await api(`/api/docker/containers/${encodeURIComponent(id)}${force ? "?force=true" : ""}`, {
           method: "DELETE",
@@ -4159,7 +4158,6 @@
     closeMonitorPanel();
     closeAlertsPanel();
     closeEventsPanel();
-    closeServiceFrame();
     setAppNav("servicios", { keepPanels: true });
     state.dockerView = "list";
     state.dockerTab = normalizeDockerTab(state.dockerTab || "containers");
@@ -4365,6 +4363,7 @@
       els.weatherTemp.textContent = `${shown}°`;
       if (els.weatherIcon && data.icon) els.weatherIcon.textContent = data.icon;
       state.weatherCity = data.city || "Valladolid";
+      state.weatherData = data; // 4.11.5 - para que los widgets puedan leer temp/icon reales
       if (els.weather) {
         els.weather.title = `Clima ${state.weatherCity}${data.observedAt ? " · " + data.observedAt : ""}`;
       }
@@ -4405,66 +4404,99 @@
     }
   }
 
-  function renderServices() {
+  function serviceCardHtml(s) {
     const running = state.docker?.running ?? "—";
     const online = state.docker?.docker === "online";
     const containers = state.docker?.containers || [];
     const portainerUp = containers.some((c) => String(c.name || "").toLowerCase().includes("portainer"));
 
-    els.services.innerHTML = services
-      .map((s) => {
-        const live = s.live;
-        const active = live && state.selectedService === s.id;
-        let status = "Pronto";
-        let ok = false;
-        if (s.id === "docker") {
-          status = online ? `${running} contenedores` : "offline";
-          ok = online;
-        } else if (s.id === "portainer") {
-          status = portainerUp ? "cuenta conectada" : "offline";
-          ok = portainerUp;
-        } else if (s.id === "grafana") {
-          const grafanaUp = containers.some((c) =>
-            String(c.name || "").toLowerCase().includes("grafana")
-          );
-          status = grafanaUp ? "cuenta conectada" : "offline";
-          ok = grafanaUp;
-        } else if (s.id === "prometheus") {
-          const promUp = containers.some((c) =>
-            String(c.name || "").toLowerCase().includes("prometheus")
-          );
-          status = promUp ? "cuenta conectada" : "offline";
-          ok = promUp;
-        } else if (s.id === "spotify") {
-          const sp = state.spotify;
-          if (!sp) {
-            status = "Spotify Connect";
-            ok = false;
-          } else if (!sp.configured) {
-            status = "falta Client ID";
-            ok = false;
-          } else if (!sp.connected) {
-            status = "conectar cuenta";
-            ok = false;
-          } else {
-            status = sp.playing ? "reproduciendo" : "listo";
-            ok = true;
-          }
-        }
-        const ico = s.iconImg
-          ? `<div class="service-ico img-wrap"><img src="${s.iconImg}" alt="${s.name}" /></div>`
-          : `<div class="service-ico" style="background:${s.color}">${s.icon}</div>`;
-        return `
-          <button class="service-card ${live ? "live" : "soon"} ${active ? "active" : ""}" data-service="${s.id}" ${live ? "" : "disabled"} type="button">
-            ${ico}
-            <h3>${s.name}</h3>
-            <div class="status-line"><span class="dot ${ok || !live ? "" : "off"}"></span><span>${status}</span></div>
-          </button>`;
-      })
-      .join("");
+    const live = s.live;
+    const active = live && state.selectedService === s.id;
+    let status = "Pronto";
+    let ok = false;
+    if (s.id === "docker") {
+      status = online ? `${running} contenedores` : "offline";
+      ok = online;
+    } else if (s.id === "portainer") {
+      status = portainerUp ? "cuenta conectada" : "offline";
+      ok = portainerUp;
+    } else if (s.id === "grafana") {
+      const grafanaUp = containers.some((c) =>
+        String(c.name || "").toLowerCase().includes("grafana")
+      );
+      status = grafanaUp ? "cuenta conectada" : "offline";
+      ok = grafanaUp;
+    } else if (s.id === "prometheus") {
+      const promUp = containers.some((c) =>
+        String(c.name || "").toLowerCase().includes("prometheus")
+      );
+      status = promUp ? "cuenta conectada" : "offline";
+      ok = promUp;
+    } else if (s.id === "spotify") {
+      const sp = state.spotify;
+      if (!sp) {
+        status = "Spotify Connect";
+        ok = false;
+      } else if (!sp.configured) {
+        status = "falta Client ID";
+        ok = false;
+      } else if (!sp.connected) {
+        status = "conectar cuenta";
+        ok = false;
+      } else {
+        status = sp.playing ? "reproduciendo" : "listo";
+        ok = true;
+      }
+    }
+    const ico = s.iconImg
+      ? `<div class="service-ico img-wrap"><img src="${s.iconImg}" alt="${s.name}" /></div>`
+      : `<div class="service-ico" style="background:${s.color}">${s.icon}</div>`;
+    // 4.16.19 - Favoritos, solo marcables en modo reordenar (donde el tap
+    // normal de la tarjeta ya esta suprimido) - fuera de ese modo el
+    // efecto real es que los favoritos salen primero (sortFavoritesFirst),
+    // no hace falta un badge permanente para eso.
+    const isFav = (state.serviceFavorites || []).includes(s.id);
+    const favStar = reorderState.active
+      ? `<span class="service-fav-star${isFav ? " active" : ""}" data-fav-toggle="${s.id}">${isFav ? "⭐" : "☆"}</span>`
+      : "";
+    return `
+      <button class="service-card ${live ? "live" : "soon"} ${active ? "active" : ""}" data-service="${s.id}" ${live ? "" : "disabled"} type="button">
+        ${favStar}
+        ${ico}
+        <h3>${s.name}</h3>
+        <div class="status-line"><span class="dot ${ok || !live ? "" : "off"}"></span><span>${status}</span></div>
+      </button>`;
+  }
 
-    els.services.querySelectorAll(".service-card.live").forEach((btn) => {
+  function toggleServiceFavorite(id) {
+    const set = new Set(state.serviceFavorites || []);
+    if (set.has(id)) set.delete(id);
+    else set.add(id);
+    const ids = [...set];
+    state.serviceFavorites = ids;
+    sortFavoritesFirst();
+    renderServices();
+    api("/api/ui/favorites/services", { method: "PUT", body: JSON.stringify({ ids }) }).catch((err) =>
+      toast(err.message || "Error guardando favorito")
+    );
+  }
+
+  function sortFavoritesFirst() {
+    const favSet = new Set(state.serviceFavorites || []);
+    if (!favSet.size) return;
+    services.sort((a, b) => (favSet.has(b.id) ? 1 : 0) - (favSet.has(a.id) ? 1 : 0));
+  }
+
+  function bindServiceCardClicks(container) {
+    container.querySelectorAll("[data-fav-toggle]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleServiceFavorite(el.getAttribute("data-fav-toggle"));
+      });
+    });
+    container.querySelectorAll(".service-card.live").forEach((btn) => {
       btn.addEventListener("click", () => {
+        if (state.reorderingServices) return;
         const id = btn.dataset.service;
         const svc = services.find((s) => s.id === id);
         state.selectedService = id;
@@ -4488,6 +4520,185 @@
       });
     });
   }
+
+  // —— Páginas horizontales de servicios 4.11.3 ——
+  // En modo reordenar (4.11.2) se muestra una unica grid plana en
+  // #services-grid, para poder arrastrar tarjetas libremente sin la
+  // complejidad de arrastrar entre paginas. Fuera de modo reordenar, se usa
+  // el paginador con swipe (#services-pager). Deliberadamente NO se persiste
+  // la pagina actual - es posicion de navegacion efimera, no una preferencia.
+  // 4.16.3 - 9 por pagina (grid 3x3 real), antes 6 (3x2) - el grid ya era de
+  // 3 columnas desde 4.11.3, solo hacia falta esta constante.
+  const SERVICES_PER_PAGE = 9;
+  let servicesPageIndex = 0;
+
+  function goToServicesPage(index) {
+    const track = els.servicesPagesTrack;
+    if (!track || !track.children.length) return;
+    servicesPageIndex = Math.max(0, Math.min(index, track.children.length - 1));
+    track.style.transform = `translateX(-${servicesPageIndex * 100}%)`;
+    els.servicesPagerDots?.querySelectorAll(".services-pager-dot").forEach((dot, i) => {
+      dot.classList.toggle("active", i === servicesPageIndex);
+    });
+  }
+
+  let servicesSwipeStart = null;
+  function bindServicesSwipe() {
+    const pager = els.servicesPager;
+    if (!pager || pager.dataset.swipeBound) return;
+    pager.dataset.swipeBound = "1"; // enlazar una sola vez; el track se re-renderiza, el pager no
+    pager.addEventListener("pointerdown", (e) => {
+      servicesSwipeStart = { x: e.clientX, y: e.clientY, id: e.pointerId };
+    });
+    pager.addEventListener("pointerup", (e) => {
+      if (!servicesSwipeStart || servicesSwipeStart.id !== e.pointerId) return;
+      const dx = e.clientX - servicesSwipeStart.x;
+      const dy = e.clientY - servicesSwipeStart.y;
+      servicesSwipeStart = null;
+      // umbral minimo + debe ser mas horizontal que vertical, para no
+      // confundir un swipe de pagina con un scroll vertical accidental
+      if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) return;
+      goToServicesPage(dx < 0 ? servicesPageIndex + 1 : servicesPageIndex - 1);
+    });
+    pager.addEventListener("pointercancel", () => {
+      servicesSwipeStart = null;
+    });
+  }
+
+  function renderServices() {
+    const cardsHtml = services.map(serviceCardHtml);
+
+    if (reorderState.active) {
+      if (els.servicesPager) els.servicesPager.hidden = true;
+      if (els.servicesPagerDots) els.servicesPagerDots.hidden = true;
+      if (els.services) {
+        els.services.hidden = false;
+        els.services.innerHTML = cardsHtml.join("");
+        bindServiceCardClicks(els.services);
+      }
+      bindServiceDrag();
+      return;
+    }
+
+    if (els.services) els.services.hidden = true;
+    if (!els.servicesPager || !els.servicesPagesTrack) return;
+    els.servicesPager.hidden = false;
+
+    const pages = [];
+    for (let i = 0; i < cardsHtml.length; i += SERVICES_PER_PAGE) {
+      pages.push(cardsHtml.slice(i, i + SERVICES_PER_PAGE));
+    }
+    if (!pages.length) pages.push([]);
+    if (servicesPageIndex >= pages.length) servicesPageIndex = pages.length - 1;
+
+    els.servicesPagesTrack.innerHTML = pages
+      .map((page) => `<div class="services-page">${page.join("")}</div>`)
+      .join("");
+    els.servicesPagesTrack.style.transform = `translateX(-${servicesPageIndex * 100}%)`;
+
+    if (els.servicesPagerDots) {
+      els.servicesPagerDots.hidden = pages.length <= 1;
+      els.servicesPagerDots.innerHTML =
+        pages.length > 1
+          ? pages
+              .map((_, i) => `<span class="services-pager-dot ${i === servicesPageIndex ? "active" : ""}"></span>`)
+              .join("")
+          : "";
+    }
+
+    bindServiceCardClicks(els.servicesPagesTrack);
+    bindServicesSwipe();
+  }
+
+  // —— Ordenar Servicios 4.11.2 ——
+  // Solo se persiste el ORDEN (array de ids); los datos de cada servicio
+  // (nombre/color/icono/href) siguen viviendo en el array `services` de
+  // arriba, definido en codigo. Reordenar mueve elementos del mismo array
+  // en memoria, no reconstruye los objetos.
+  function applyServiceOrder(order) {
+    if (!Array.isArray(order) || !order.length) return;
+    const byId = new Map(services.map((s) => [s.id, s]));
+    const ordered = [];
+    for (const id of order) {
+      const s = byId.get(id);
+      if (s) {
+        ordered.push(s);
+        byId.delete(id);
+      }
+    }
+    // servicios nuevos que no estaban en el orden guardado (p.ej. anadidos
+    // en una actualizacion posterior) se anaden al final, en su orden original
+    for (const s of services) {
+      if (byId.has(s.id)) ordered.push(s);
+    }
+    services.length = 0;
+    services.push(...ordered);
+  }
+
+  const reorderState = { active: false, dragEl: null };
+
+  function persistServiceOrderFromDom() {
+    const ids = [...els.services.querySelectorAll(".service-card")].map((el) => el.dataset.service);
+    applyServiceOrder(ids);
+    api("/api/ui/services-order", { method: "PUT", body: JSON.stringify({ order: ids }) }).catch(() => {});
+  }
+
+  function toggleServiceReorder() {
+    if (!reorderState.active && !requireEditUnlocked()) return; // solo protege al ENTRAR, salir siempre funciona
+    reorderState.active = !reorderState.active;
+    state.reorderingServices = reorderState.active;
+    els.services?.classList.toggle("reordering", reorderState.active);
+    const btn = document.getElementById("services-reorder-btn");
+    if (btn) btn.textContent = reorderState.active ? "Listo" : "Reordenar";
+    if (reorderState.active) {
+      renderServices(); // pasa de paginado a grid plana
+    } else {
+      persistServiceOrderFromDom();
+      servicesPageIndex = 0;
+      renderServices(); // vuelve al paginado, desde la primera pagina
+    }
+  }
+
+  function getCardAfter(container, y) {
+    const cards = [...container.querySelectorAll(".service-card:not(.dragging)")];
+    return cards.reduce(
+      (closest, card) => {
+        const box = card.getBoundingClientRect();
+        const offset = y - box.top - box.height / 2;
+        if (offset < 0 && offset > closest.offset) return { offset, element: card };
+        return closest;
+      },
+      { offset: -Infinity, element: null }
+    ).element;
+  }
+
+  function bindServiceDrag() {
+    if (!els.services) return;
+    els.services.querySelectorAll(".service-card").forEach((card) => {
+      card.addEventListener("pointerdown", (e) => {
+        if (!reorderState.active) return;
+        e.preventDefault();
+        card.setPointerCapture(e.pointerId);
+        reorderState.dragEl = card;
+        card.classList.add("dragging");
+      });
+      card.addEventListener("pointermove", (e) => {
+        if (reorderState.dragEl !== card) return;
+        const after = getCardAfter(els.services, e.clientY);
+        if (after == null) els.services.appendChild(card);
+        else els.services.insertBefore(card, after);
+      });
+      const endDrag = () => {
+        if (reorderState.dragEl !== card) return;
+        card.classList.remove("dragging");
+        reorderState.dragEl = null;
+      };
+      card.addEventListener("pointerup", endDrag);
+      card.addEventListener("pointercancel", endDrag);
+    });
+  }
+
+  document.getElementById("services-reorder-btn")?.addEventListener("click", toggleServiceReorder);
 
   function metricLevel(kind, key, value) {
     if (value == null || Number.isNaN(Number(value))) return "unknown";
@@ -4779,6 +4990,22 @@
           }
         });
       });
+    }
+
+    // 4.11.10 - Escenas como tiles en Inicio. Deliberadamente oculto por
+    // completo si no hay escenas reales creadas - un mensaje "sin escenas"
+    // en la pantalla principal seria ruido, no informacion util; en el
+    // Menu rapido (4.11.9) SI se muestra ese mensaje, porque ahi el usuario
+    // fue a buscar escenas especificamente.
+    const homeScenesSection = document.getElementById("home-scenes-section");
+    const homeScenesGrid = document.getElementById("home-scenes");
+    if (homeScenesSection && homeScenesGrid) {
+      const scenesArr = state.scenes || [];
+      homeScenesSection.hidden = scenesArr.length === 0;
+      if (scenesArr.length) {
+        homeScenesGrid.innerHTML = scenesArr.map(sceneTileHtml).join("");
+        bindSceneTiles(homeScenesGrid, scenesArr);
+      }
     }
 
     const all = (state.agentDevices && state.agentDevices.devices) || [];
@@ -5260,12 +5487,14 @@
       if (preview.needsReconnect.length) {
         lines.push(`⚠️ Tras importar, reconecta: ${preview.needsReconnect.join(", ")}`);
       }
-      // Confirmación siempre real (window.confirm), no se salta con
-      // "confirmDestructive: false" — importar sobrescribe automatizaciones,
-      // escenas, permisos y config de golpe, es la acción más destructiva
-      // de toda la app, no una más para el atajo de acciones rutinarias.
-      const msg = `Esto reemplazará tu configuración actual:\n\n${lines.join("\n")}\n\n¿Continuar?`;
-      if (!window.confirm(msg)) return;
+      // Confirmación siempre real (showConfirmModal, no askConfirm), no se
+      // salta con "confirmDestructive: false" — importar sobrescribe
+      // automatizaciones, escenas, permisos y config de golpe, es la
+      // acción más destructiva de toda la app, no una más para el atajo
+      // de acciones rutinarias.
+      const msg = `Esto reemplazará tu configuración actual:\n\n${lines.join("\n")}`;
+      const ok = await showConfirmModal({ title: "¿Importar configuración?", message: msg, confirmLabel: "Continuar" });
+      if (!ok) return;
 
       const result = await api("/api/config-backup/import", {
         method: "POST",
@@ -5293,6 +5522,334 @@
     if (el) el.textContent = name || "BMO OS";
   }
 
+  // 4.11.11 - "theme" ya existia en config.json desde antes de esta sesion,
+  // documentado en 4.10.12 como campo muerto (sin frontend/backend que lo
+  // usara). Se revive aqui de verdad en vez de crear un campo paralelo.
+  const VALID_THEMES = ["dark", "light", "amoled", "blue", "cyber"];
+  function applyTheme(theme) {
+    document.documentElement.setAttribute("data-theme", VALID_THEMES.includes(theme) ? theme : "dark");
+  }
+
+  // 4.16.19 - Color de acento independiente del tema. "custom" no tiene
+  // bloque [data-accent] en CSS (un hex libre no se puede expresar en un
+  // selector) - se aplica directamente como custom property inline, que
+  // gana por especificidad sobre cualquier [data-accent="x"] del tema.
+  const VALID_ACCENTS = ["green", "blue", "purple", "custom"];
+  function applyAccent(color, customHex) {
+    const c = VALID_ACCENTS.includes(color) ? color : "green";
+    document.documentElement.setAttribute("data-accent", c);
+    if (c === "custom" && /^#[0-9a-fA-F]{6}$/.test(customHex || "")) {
+      document.documentElement.style.setProperty("--accent", customHex);
+      document.documentElement.style.setProperty("--tint-accent", customHex + "2e"); // ~18% alpha
+    } else {
+      document.documentElement.style.removeProperty("--accent");
+      document.documentElement.style.removeProperty("--tint-accent");
+    }
+  }
+
+  function themePickerHtml(currentTheme) {
+    return [
+      ["dark", "BMO Dark"],
+      ["light", "BMO Light"],
+      ["amoled", "BMO AMOLED"],
+      ["blue", "BMO Blue"],
+      ["cyber", "BMO Cyber"],
+    ]
+      .map(
+        ([id, label]) =>
+          `<button type="button" class="dk-btn ghost${(currentTheme || "dark") === id ? " active-size" : ""}" data-theme-choice="${id}">${label}</button>`
+      )
+      .join("");
+  }
+
+  // 4.16.19 - Acento independiente del tema, mismo patron visual que
+  // themePickerHtml() (botones pill, no un <select>, para tocar con el
+  // dedo sin apuntar fino).
+  function accentPickerHtml(currentAccent) {
+    return [
+      ["green", "🟢 Verde"],
+      ["blue", "🔵 Azul"],
+      ["purple", "🟣 Morado"],
+      ["custom", "🎨 Personalizado"],
+    ]
+      .map(
+        ([id, label]) =>
+          `<button type="button" class="dk-btn ghost${(currentAccent || "green") === id ? " active-size" : ""}" data-accent-choice="${id}">${label}</button>`
+      )
+      .join("");
+  }
+
+  // —— Fondo 4.11.12 ——
+  // Capa separada (#bg-layer) para poder aplicar blur/brightness sin
+  // difuminar el contenido real por encima - ver la nota en styles.css.
+  function applyBackground(bg) {
+    const layer = document.getElementById("bg-layer");
+    if (!layer || !bg) return;
+    layer.style.backgroundImage = "";
+    if (bg.type === "solid") {
+      layer.style.background = bg.color || "var(--bg)";
+    } else if (bg.type === "image" && bg.imagePath) {
+      layer.style.background = "var(--bg)";
+      layer.style.backgroundImage = `url('${bg.imagePath}')`;
+      layer.style.backgroundSize = "cover";
+      layer.style.backgroundPosition = "center";
+    } else {
+      layer.style.background = "radial-gradient(1200px 800px at 50% -10%, var(--bg-glow) 0%, var(--bg) 55%)";
+    }
+    const opacity = (bg.opacity ?? 100) / 100;
+    const blur = bg.blur ?? 0;
+    const brightness = (bg.brightness ?? 100) / 100;
+    layer.style.opacity = String(opacity);
+    layer.style.filter = `blur(${blur}px) brightness(${brightness})`;
+  }
+
+  els.aparienciaPanel = document.getElementById("apariencia-panel");
+  els.aparienciaBody = document.getElementById("apariencia-body");
+  els.aparienciaBack = document.getElementById("apariencia-back");
+
+  function closeAparienciaPanel() {
+    if (els.aparienciaPanel) els.aparienciaPanel.hidden = true;
+  }
+
+  function renderAparienciaBody() {
+    if (!els.aparienciaBody) return;
+    const theme = state.settingsData?.general?.theme || "dark";
+    const bg = state.background || { type: "gradient", opacity: 100, blur: 0, brightness: 100 };
+
+    els.aparienciaBody.innerHTML = `
+      <div class="plugin-card" style="margin-bottom:10px">
+        <strong>Tema</strong>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${themePickerHtml(theme)}</div>
+      </div>
+      <div class="plugin-card" style="margin-bottom:10px">
+        <strong>Fondo</strong>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button type="button" class="dk-btn ghost${bg.type === "gradient" ? " active-size" : ""}" data-bg-type="gradient">Gradiente</button>
+          <button type="button" class="dk-btn ghost${bg.type === "solid" ? " active-size" : ""}" data-bg-type="solid">Sólido</button>
+          <button type="button" class="dk-btn ghost${bg.type === "image" ? " active-size" : ""}" data-bg-type="image">Imagen</button>
+        </div>
+        ${
+          bg.type === "solid"
+            ? `<label style="display:block;margin-top:10px">Color
+                <input type="color" id="bg-color-input" value="${escHtml(bg.color || "#101826")}" style="display:block;margin-top:4px;width:100%;height:40px;border-radius:8px;border:1px solid var(--border);background:var(--panel-2)" />
+              </label>`
+            : ""
+        }
+        ${
+          bg.type === "image"
+            ? `<div style="margin-top:10px">
+                <p class="sic-sub">${bg.imagePath ? "Imagen cargada" : "Sin imagen todavía"}</p>
+                <button type="button" class="dk-btn ghost" id="bg-image-pick-btn" style="margin-top:6px">Elegir imagen…</button>
+              </div>`
+            : ""
+        }
+        <label style="display:block;margin-top:12px">Opacidad (${bg.opacity ?? 100}%)
+          <input type="range" id="bg-opacity" min="10" max="100" value="${bg.opacity ?? 100}" style="width:100%" />
+        </label>
+        <label style="display:block;margin-top:8px">Desenfoque (${bg.blur ?? 0}px)
+          <input type="range" id="bg-blur" min="0" max="20" value="${bg.blur ?? 0}" style="width:100%" />
+        </label>
+        <label style="display:block;margin-top:8px">Brillo (${bg.brightness ?? 100}%)
+          <input type="range" id="bg-brightness" min="30" max="150" value="${bg.brightness ?? 100}" style="width:100%" />
+        </label>
+      </div>
+    `;
+
+    els.aparienciaBody.querySelectorAll("[data-theme-choice]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const theme2 = btn.getAttribute("data-theme-choice");
+        applyTheme(theme2);
+        try {
+          await api("/api/system/settings", { method: "POST", body: JSON.stringify({ theme: theme2 }) });
+          state.settingsData = { ...(state.settingsData || {}), general: { ...(state.settingsData?.general || {}), theme: theme2 } };
+          renderAparienciaBody();
+        } catch (err) {
+          toast(err.message || "Error al guardar el tema");
+        }
+      });
+    });
+
+    els.aparienciaBody.querySelectorAll("[data-bg-type]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const type = btn.getAttribute("data-bg-type");
+        try {
+          state.background = await api("/api/ui/background", { method: "PUT", body: JSON.stringify({ type }) });
+          applyBackground(state.background);
+          renderAparienciaBody();
+        } catch (err) {
+          toast(err.message || "Error al cambiar el fondo");
+        }
+      });
+    });
+
+    document.getElementById("bg-color-input")?.addEventListener("change", async (e) => {
+      try {
+        state.background = await api("/api/ui/background", {
+          method: "PUT",
+          body: JSON.stringify({ color: e.target.value }),
+        });
+        applyBackground(state.background);
+      } catch (err) {
+        toast(err.message || "Error al guardar el color");
+      }
+    });
+
+    document.getElementById("bg-image-pick-btn")?.addEventListener("click", () => {
+      document.getElementById("bg-image-file")?.click();
+    });
+
+    const debouncedBgSlider = (id, key) => {
+      const input = document.getElementById(id);
+      if (!input) return;
+      input.addEventListener("input", () => {
+        const value = Number(input.value);
+        applyBackground({ ...bg, [key]: value }); // feedback inmediato mientras se arrastra
+      });
+      input.addEventListener("change", async () => {
+        try {
+          state.background = await api("/api/ui/background", {
+            method: "PUT",
+            body: JSON.stringify({ [key]: Number(input.value) }),
+          });
+          renderAparienciaBody();
+        } catch (err) {
+          toast(err.message || "Error al guardar");
+        }
+      });
+    };
+    debouncedBgSlider("bg-opacity", "opacity");
+    debouncedBgSlider("bg-blur", "blur");
+    debouncedBgSlider("bg-brightness", "brightness");
+  }
+
+  async function openAparienciaPanel() {
+    if (!els.aparienciaPanel) {
+      toast("Apariencia no disponible");
+      return;
+    }
+    closePersonalizacionPanel();
+    try {
+      state.background = await api("/api/ui/background");
+    } catch {
+      /* se usa lo que ya hubiera en cache */
+    }
+    renderAparienciaBody();
+    els.aparienciaPanel.hidden = false;
+  }
+
+  els.aparienciaBack?.addEventListener("click", () => {
+    closeAparienciaPanel();
+    openPersonalizacionPanel();
+  });
+
+  document.getElementById("bg-image-file")?.addEventListener("change", async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 6 * 1024 * 1024) {
+      toast("Imagen demasiado grande (máximo 6MB)");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        state.background = await api("/api/ui/background/image", {
+          method: "POST",
+          body: JSON.stringify({ dataUrl: reader.result }),
+        });
+        applyBackground(state.background);
+        renderAparienciaBody();
+        toast("Imagen de fondo actualizada");
+      } catch (err) {
+        toast(err.message || "Error al subir la imagen");
+      }
+    };
+    reader.readAsDataURL(file);
+  });
+
+  // —— Modo Kiosco inteligente 4.11.13 ——
+  // No reimplementa auto-recuperacion en el frontend ni en el backend: el
+  // script bmo-kiosk.sh en el propio Pi ya tiene su bucle de relanzado
+  // (ver kioskService.js en el backend). Este panel solo da visibilidad
+  // real y una accion manual de reinicio.
+  els.pantallasPanel = document.getElementById("pantallas-panel");
+  els.pantallasBody = document.getElementById("pantallas-body");
+  els.pantallasBack = document.getElementById("pantallas-back");
+
+  function closePantallasPanel() {
+    if (els.pantallasPanel) els.pantallasPanel.hidden = true;
+    if (state.pantallasTimer) {
+      clearInterval(state.pantallasTimer);
+      state.pantallasTimer = null;
+    }
+  }
+
+  function renderPantallasBody() {
+    if (!els.pantallasBody) return;
+    const k = state.kioskStatus;
+    if (!k) {
+      els.pantallasBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+      return;
+    }
+    els.pantallasBody.innerHTML = `
+      <div class="plugin-card" style="margin-bottom:10px">
+        <div class="docker-actions" style="justify-content:space-between;margin-bottom:8px">
+          <span>🌐 Firefox (kiosco)</span>
+          <strong>${k.firefoxActive ? "🟢 Activo" : "🔴 No responde"}</strong>
+        </div>
+        <div class="docker-actions" style="justify-content:space-between;margin-bottom:8px">
+          <span>🖥️ Resolución</span>
+          <strong>${escHtml(k.resolution || "—")}</strong>
+        </div>
+        <div class="docker-actions" style="justify-content:space-between">
+          <span>🔄 Orientación</span>
+          <strong>${escHtml(k.orientation || "—")}</strong>
+        </div>
+      </div>
+      <button type="button" class="dk-btn ghost" id="kiosk-restart-btn">Reiniciar kiosco</button>
+    `;
+    document.getElementById("kiosk-restart-btn")?.addEventListener("click", async (e) => {
+      if (!(await askConfirm("¿Reiniciar el navegador del kiosco? La pantalla se recargará."))) return;
+      e.target.disabled = true;
+      toast("Reiniciando kiosco…");
+      try {
+        await api("/api/system/kiosk/restart", { method: "POST", body: "{}" });
+        setTimeout(refreshPantallas, 6000); // da tiempo real a que Firefox se relance
+      } catch (err) {
+        toast(err.message || "Error al reiniciar el kiosco");
+      } finally {
+        e.target.disabled = false;
+      }
+    });
+  }
+
+  async function refreshPantallas() {
+    try {
+      state.kioskStatus = await api("/api/system/kiosk");
+      renderPantallasBody();
+    } catch (err) {
+      if (els.pantallasBody) els.pantallasBody.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
+    }
+  }
+
+  async function openPantallasPanel() {
+    if (!els.pantallasPanel) {
+      toast("Pantallas no disponible");
+      return;
+    }
+    closePersonalizacionPanel();
+    els.pantallasPanel.hidden = false;
+    els.pantallasBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    await refreshPantallas();
+    if (state.pantallasTimer) clearInterval(state.pantallasTimer);
+    state.pantallasTimer = setInterval(() => refreshPantallas().catch(() => {}), 15000);
+  }
+
+  els.pantallasBack?.addEventListener("click", () => {
+    closePantallasPanel();
+    openPersonalizacionPanel();
+  });
+
   function settingsInfoRow(label, value) {
     return `<p class="sic-sub">${escHtml(label)}: ${escHtml(value == null ? "—" : String(value))}</p>`;
   }
@@ -5311,6 +5868,29 @@
         <label style="display:block;margin-top:8px">Nombre
           <input type="text" id="set-name" value="${escHtml(s.general.name)}" maxlength="60" style="width:100%;margin-top:4px;padding:8px;border-radius:8px;background:var(--panel-2);color:var(--fg);border:1px solid var(--border)" />
         </label>
+        <div style="margin-top:12px">
+          <p class="sic-sub" style="margin-bottom:6px">Tema</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${themePickerHtml(s.general.theme)}
+          </div>
+        </div>
+        <div style="margin-top:12px">
+          <p class="sic-sub" style="margin-bottom:6px">Color de acento</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${accentPickerHtml(s.general.accentColor)}
+          </div>
+          ${s.general.accentColor === "custom" ? `<input type="color" id="set-accent-custom" value="${s.general.accentCustomHex || "#2ee59d"}" style="margin-top:8px;width:60px;height:36px;border-radius:8px;border:1px solid var(--border);background:none" />` : ""}
+        </div>
+        <div style="margin-top:12px">
+          <label style="display:block">Página de inicio
+            <select id="set-start-page" style="width:100%;margin-top:4px;padding:8px;border-radius:8px;background:var(--panel-2);color:var(--fg);border:1px solid var(--border)">
+              <option value="inicio" ${s.general.startPage === "inicio" ? "selected" : ""}>Inicio</option>
+              <option value="servicios" ${s.general.startPage === "servicios" ? "selected" : ""}>Servicios</option>
+              <option value="sistema" ${s.general.startPage === "sistema" ? "selected" : ""}>Sistema</option>
+              <option value="dispositivos" ${s.general.startPage === "dispositivos" ? "selected" : ""}>Dispositivos</option>
+            </select>
+          </label>
+        </div>
       </div>
       <div class="plugin-card" style="margin-bottom:10px">
         <strong>Sistema</strong>
@@ -5322,6 +5902,8 @@
         ${settingsInfoRow("Registro", `${s.sistema.logs.path} (${s.sistema.logs.sizeKb ?? "—"} KB)`)}
         ${settingsInfoRow("Almacenamiento usado", `${s.sistema.storage.diskPercent}%`)}
         ${settingsInfoRow("Zona horaria", s.sistema.timezone)}
+        <button type="button" id="set-reboot-btn" class="dk-btn ghost danger" style="margin-top:10px">Reiniciar Raspberry</button>
+        <p class="sic-sub" style="margin-top:4px">Reinicia todo el sistema (no solo el kiosco) — tarda ~1 min en volver.</p>
       </div>
       <div class="plugin-card" style="margin-bottom:10px">
         <strong>Seguridad</strong>
@@ -5332,6 +5914,7 @@
           <input type="checkbox" id="set-confirm" ${s.seguridad.confirmDestructive ? "checked" : ""} style="width:22px;height:22px;accent-color:var(--accent)" />
           Pedir confirmación en acciones destructivas
         </label>
+        <button type="button" id="set-logout-btn" class="dk-btn" style="margin-top:10px">Cerrar sesión</button>
       </div>
       <div class="plugin-card" style="margin-bottom:10px">
         <strong>Red</strong>
@@ -5341,6 +5924,26 @@
         ${settingsInfoRow("Proxies", s.red.proxies.join(", "))}
       </div>
       <div class="plugin-card" style="margin-bottom:10px">
+        <strong>Accesibilidad</strong>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:8px">
+          <input type="checkbox" id="a11y-large-text" ${state.accessibility?.largeText ? "checked" : ""} style="width:22px;height:22px;accent-color:var(--accent)" />
+          Texto grande
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:8px">
+          <input type="checkbox" id="a11y-high-contrast" ${state.accessibility?.highContrast ? "checked" : ""} style="width:22px;height:22px;accent-color:var(--accent)" />
+          Alto contraste
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:8px">
+          <input type="checkbox" id="a11y-reduce-motion" ${state.accessibility?.reduceMotion ? "checked" : ""} style="width:22px;height:22px;accent-color:var(--accent)" />
+          Reducir animaciones
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:8px">
+          <input type="checkbox" id="a11y-visual-vibration" ${state.accessibility?.visualVibration ? "checked" : ""} style="width:22px;height:22px;accent-color:var(--accent)" />
+          Vibración visual al pulsar
+        </label>
+        <p class="sic-sub" style="margin-top:6px">Se aplica al instante, sin necesidad de guardar.</p>
+      </div>
+      <div class="plugin-card" style="margin-bottom:10px">
         <strong>Backup de configuración</strong>
         <p class="sic-sub">Exporta config, permisos, automatizaciones, escenas y ajustes de plugins. La clave de API y las credenciales/tokens OAuth (p.ej. Spotify) se excluyen siempre.</p>
         <button type="button" class="dk-btn ghost" id="settings-export-btn" style="margin-top:8px">Exportar configuración</button>
@@ -5348,6 +5951,21 @@
       </div>
       <button type="button" class="dk-btn" id="settings-save-btn">Guardar</button>
     `;
+    ["large-text", "high-contrast", "reduce-motion", "visual-vibration"].forEach((key) => {
+      document.getElementById(`a11y-${key}`)?.addEventListener("change", async (e) => {
+        const field = key.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+        try {
+          const prefs = await api("/api/ui/accessibility", {
+            method: "PUT",
+            body: JSON.stringify({ [field]: e.target.checked }),
+          });
+          applyAccessibility(prefs);
+        } catch (err) {
+          e.target.checked = !e.target.checked;
+          toast(err.message || "Error guardando accesibilidad");
+        }
+      });
+    });
     document.getElementById("settings-export-btn")?.addEventListener("click", async (e) => {
       e.target.disabled = true;
       try {
@@ -5381,7 +5999,7 @@
         });
         state.settingsData = {
           ...s,
-          general: { name },
+          general: { ...s.general, name },
           sistema: { ...s.sistema, heartbeatTimeoutSec },
           seguridad: { ...s.seguridad, confirmDestructive },
         };
@@ -5392,6 +6010,108 @@
         toast(err.message || "Error al guardar");
       } finally {
         e.target.disabled = false;
+      }
+    });
+
+    els.settingsBody.querySelectorAll("[data-theme-choice]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const theme = btn.getAttribute("data-theme-choice");
+        applyTheme(theme); // feedback inmediato, no esperar al round-trip
+        try {
+          await api("/api/system/settings", { method: "POST", body: JSON.stringify({ theme }) });
+          state.settingsData = { ...s, general: { ...s.general, theme } };
+          renderSettingsBody();
+        } catch (err) {
+          toast(err.message || "Error al guardar el tema");
+        }
+      });
+    });
+
+    els.settingsBody.querySelectorAll("[data-accent-choice]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const accentColor = btn.getAttribute("data-accent-choice");
+        applyAccent(accentColor, s.general.accentCustomHex);
+        try {
+          await api("/api/system/settings", { method: "POST", body: JSON.stringify({ accentColor }) });
+          state.settingsData = { ...s, general: { ...s.general, accentColor } };
+          renderSettingsBody();
+        } catch (err) {
+          toast(err.message || "Error al guardar el acento");
+        }
+      });
+    });
+    document.getElementById("set-accent-custom")?.addEventListener("input", async (e) => {
+      const accentCustomHex = e.target.value;
+      applyAccent("custom", accentCustomHex);
+      try {
+        await api("/api/system/settings", { method: "POST", body: JSON.stringify({ accentColor: "custom", accentCustomHex }) });
+        state.settingsData = { ...s, general: { ...s.general, accentColor: "custom", accentCustomHex } };
+      } catch (err) {
+        toast(err.message || "Error al guardar el color personalizado");
+      }
+    });
+    document.getElementById("set-start-page")?.addEventListener("change", async (e) => {
+      const startPage = e.target.value;
+      try {
+        await api("/api/system/settings", { method: "POST", body: JSON.stringify({ startPage }) });
+        state.settingsData = { ...s, general: { ...s.general, startPage } };
+        toast("Página de inicio guardada");
+      } catch (err) {
+        toast(err.message || "Error al guardar la página de inicio");
+      }
+    });
+
+    // 4.17.4 - Cerrar sesion: revoca tanto la sesion corta (2h) como el
+    // dispositivo confiable de este navegador (si lo hay), y vuelve a
+    // mostrar la pantalla de login al recargar. No toca x-bmo-key, que
+    // sigue protegiendo el resto de la API igual que siempre.
+    document.getElementById("set-logout-btn")?.addEventListener("click", async () => {
+      const sessionToken = sessionStorage.getItem("bmo_session_token");
+      const deviceToken = localStorage.getItem("bmo_trusted_device_token");
+      if (!sessionToken && !deviceToken) {
+        toast("No hay una sesión de cuenta activa en este dispositivo");
+        return;
+      }
+      const ok = await showConfirmModal({
+        title: "Cerrar sesión",
+        message: "Se olvidará este dispositivo y tendrás que volver a iniciar sesión.",
+        confirmLabel: "Cerrar sesión",
+      });
+      if (!ok) return;
+      try {
+        await fetch("/api/auth/logout", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + (sessionToken || deviceToken),
+          },
+          body: JSON.stringify({ trustedDeviceToken: deviceToken || undefined }),
+        });
+      } catch (_) {
+        /* aunque falle la llamada, se limpia el dispositivo localmente igualmente */
+      }
+      sessionStorage.removeItem("bmo_session_token");
+      localStorage.removeItem("bmo_trusted_device_token");
+      window.location.reload();
+    });
+
+    // 4.18.5 - Reinicia la Raspberry entera (no solo Firefox como
+    // "Reiniciar kiosco" en Pantallas) - bmo-api, Docker, todo se cae y
+    // vuelve solo (systemd Restart=always). No hay boton de "Apagar":
+    // un apagado real deja la Pi muerta hasta enchufarla a mano.
+    document.getElementById("set-reboot-btn")?.addEventListener("click", async (e) => {
+      const ok = await showConfirmModal({
+        title: "Reiniciar Raspberry",
+        message: "Se reiniciará todo el sistema (BMO, Docker, el kiosco). Tardará aproximadamente un minuto en volver.",
+        confirmLabel: "Reiniciar",
+      });
+      if (!ok) return;
+      e.target.disabled = true;
+      toast("Reiniciando la Raspberry…");
+      try {
+        await api("/api/system/reboot", { method: "POST", body: "{}" });
+      } catch (_) {
+        /* la conexion se corta enseguida por el propio reinicio - esperado */
       }
     });
   }
@@ -5423,9 +6143,958 @@
     openSysHub();
   });
 
+  // —— Personalización 4.11.1 ——
+  // Panel de aterrizaje: sus 6 tarjetas abren los paneles reales que se
+  // construyen en 4.11.2-4.11.13. Hasta que cada uno exista, la tarjeta
+  // muestra "Próximamente" - mismo patron que "Históricos" en el hub de
+  // Sistema, no un boton que aparenta funcionar sin hacerlo.
+  els.personalizacionPanel = document.getElementById("personalizacion-panel");
+  els.personalizacionBody = document.getElementById("personalizacion-body");
+  els.personalizacionBack = document.getElementById("personalizacion-back");
+
+  const PERSONALIZACION_ROUTES = {
+    navegacion: () => openNavegacionPanel().catch((err) => toast(err.message || "Error")),
+    apariencia: () => openAparienciaPanel().catch((err) => toast(err.message || "Error")),
+    pantallas: () => openPantallasPanel().catch((err) => toast(err.message || "Error")),
+  };
+
+  function closePersonalizacionPanel() {
+    if (els.personalizacionPanel) els.personalizacionPanel.hidden = true;
+  }
+
+  function openPersonalizacionPanel() {
+    if (!els.personalizacionPanel) {
+      toast("Personalización no disponible");
+      return;
+    }
+    closeSysHub();
+    els.personalizacionPanel.hidden = false;
+  }
+
+  els.personalizacionBack?.addEventListener("click", () => {
+    closePersonalizacionPanel();
+    openSysHub();
+  });
+
+  els.personalizacionBody?.addEventListener("click", (e) => {
+    const card = e.target.closest("[data-personalizacion-open]");
+    if (!card) return;
+    const kind = card.getAttribute("data-personalizacion-open");
+    const opener = PERSONALIZACION_ROUTES[kind];
+    if (opener) {
+      opener();
+    } else {
+      toast("Próximamente");
+    }
+  });
+
   function askConfirm(msg) {
-    if (state.settingsData?.seguridad?.confirmDestructive === false) return true;
-    return window.confirm(msg);
+    if (state.settingsData?.seguridad?.confirmDestructive === false) return Promise.resolve(true);
+    return showConfirmModal({ title: "¿Confirmar acción?", message: msg, confirmLabel: "Confirmar" });
+  }
+
+  // —— Navegación / Páginas configurables 4.11.4 ——
+  // Las 4 vistas fijas (Inicio/Servicios/Sistema/Dispositivos) siguen siendo
+  // vistas a medida, con contenido bespoke - no se hacen genericas aqui.
+  // Este panel gestiona solo las paginas ADICIONALES que el usuario cree.
+  // Verlas usa un panel generico reutilizable (#custom-page-panel), no uno
+  // por pagina - no escalaria. Integrarlas de verdad en el dock inferior
+  // como botones es trabajo de 4.11.7 (dock configurable), deliberadamente
+  // no adelantado aqui para no duplicar ese trabajo.
+  els.navegacionPanel = document.getElementById("navegacion-panel");
+  els.navegacionBody = document.getElementById("navegacion-body");
+  els.navegacionBack = document.getElementById("navegacion-back");
+  els.customPagePanel = document.getElementById("custom-page-panel");
+  els.customPageTitle = document.getElementById("custom-page-title");
+  els.customPageBack = document.getElementById("custom-page-back");
+
+  function closeNavegacionPanel() {
+    if (els.navegacionPanel) els.navegacionPanel.hidden = true;
+  }
+
+  function closeCustomPagePanel() {
+    if (els.customPagePanel) els.customPagePanel.hidden = true;
+    if (state.customPageTimer) {
+      clearInterval(state.customPageTimer);
+      state.customPageTimer = null;
+    }
+  }
+
+  function renderUiPagesList() {
+    if (!els.navegacionBody) return;
+    const list = document.getElementById("ui-pages-list");
+    if (!list) return;
+    const pagesArr = state.uiPages || [];
+    list.innerHTML = pagesArr.length
+      ? pagesArr
+          .map(
+            (p) => `
+        <div class="docker-actions" style="justify-content:space-between;margin-bottom:8px">
+          <button type="button" class="dk-btn ghost" data-ui-page-open="${p.id}" style="flex:1;text-align:left">${escHtml(p.icon)} ${escHtml(p.name)}</button>
+          <button type="button" class="dk-btn danger" data-ui-page-delete="${p.id}">Eliminar</button>
+        </div>`
+          )
+          .join("")
+      : `<p class="sic-sub">Aún no has creado ninguna página</p>`;
+
+    list.querySelectorAll("[data-ui-page-open]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-ui-page-open");
+        const page = (state.uiPages || []).find((p) => p.id === id);
+        if (page) openCustomPagePanel(page);
+      });
+    });
+    list.querySelectorAll("[data-ui-page-delete]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-ui-page-delete");
+        const page = (state.uiPages || []).find((p) => p.id === id);
+        if (!(await askConfirm(`¿Eliminar la página "${page?.name || ""}"?`))) return;
+        try {
+          await api(`/api/ui/pages/${id}`, { method: "DELETE" });
+          state.uiPages = (state.uiPages || []).filter((p) => p.id !== id);
+          renderUiPagesList();
+          toast("Página eliminada");
+        } catch (err) {
+          toast(err.message || "Error al eliminar");
+        }
+      });
+    });
+  }
+
+  async function refreshUiPages() {
+    try {
+      const data = await api("/api/ui/pages");
+      state.uiPages = data.pages || [];
+      renderUiPagesList();
+      renderDockManageList();
+    } catch (err) {
+      const list = document.getElementById("ui-pages-list");
+      if (list) list.innerHTML = `<p class="sic-sub">${escHtml(err.message || "Error")}</p>`;
+    }
+  }
+
+  async function openNavegacionPanel() {
+    if (!els.navegacionPanel) {
+      toast("Navegación no disponible");
+      return;
+    }
+    closePersonalizacionPanel();
+    els.navegacionPanel.hidden = false;
+    await refreshUiPages();
+    try {
+      state.dockConfig = await api("/api/ui/dock");
+    } catch {
+      /* se queda con lo que ya hubiera en state.dockConfig */
+    }
+    renderDockManageList();
+    try {
+      const data = await api("/api/ui/profiles");
+      state.uiProfiles = data.profiles || [];
+    } catch {
+      /* se queda con lo que ya hubiera en cache */
+    }
+    renderProfilesList();
+  }
+
+  els.navegacionBack?.addEventListener("click", () => {
+    closeNavegacionPanel();
+    openPersonalizacionPanel();
+  });
+
+  // —— Gestión del dock 4.11.7 (vive dentro del panel Navegación) ——
+  function dockManageLabel(item) {
+    if (item.type === "fixed") return FIXED_NAV_META[item.id]?.label || item.id;
+    const page = (state.uiPages || []).find((p) => p.id === item.id);
+    return page ? `${page.icon} ${page.name}` : item.id;
+  }
+
+  async function persistDockConfig(newDock) {
+    if (!requireEditUnlocked()) return;
+    try {
+      const saved = await api("/api/ui/dock", { method: "PUT", body: JSON.stringify(newDock) });
+      state.dockConfig = saved;
+      renderDock();
+      renderDockManageList();
+    } catch (err) {
+      toast(err.message || "Error al guardar el dock");
+    }
+  }
+
+  function moveDockItem(idx, dir) {
+    const dock = state.dockConfig || DEFAULT_DOCK;
+    const items = [...dock.items];
+    const newIdx = idx + dir;
+    if (newIdx < 0 || newIdx >= items.length) return;
+    [items[idx], items[newIdx]] = [items[newIdx], items[idx]];
+    persistDockConfig({ items, iconSize: dock.iconSize });
+  }
+
+  function removeDockItem(idx) {
+    const dock = state.dockConfig || DEFAULT_DOCK;
+    if (dock.items.length <= 1) return;
+    const items = dock.items.filter((_, i) => i !== idx);
+    persistDockConfig({ items, iconSize: dock.iconSize });
+  }
+
+  function renderDockAddRow() {
+    const row = document.getElementById("ui-dock-add-row");
+    if (!row) return;
+    const dock = state.dockConfig || DEFAULT_DOCK;
+    const presentIds = new Set(dock.items.map((i) => i.id));
+    const options = [];
+    for (const [id, meta] of Object.entries(FIXED_NAV_META)) {
+      if (!presentIds.has(id)) options.push({ id, type: "fixed", label: meta.label });
+    }
+    for (const page of state.uiPages || []) {
+      if (!presentIds.has(page.id)) options.push({ id: page.id, type: "custom", label: `${page.icon} ${page.name}` });
+    }
+    if (!options.length) {
+      row.innerHTML = `<p class="sic-sub">Todas las páginas ya están en el dock</p>`;
+      return;
+    }
+    row.innerHTML = `
+      <select id="ui-dock-add-select" style="flex:1;padding:8px;border-radius:8px;background:var(--panel-2);color:var(--fg);border:1px solid var(--border)">
+        ${options.map((o) => `<option value="${o.id}" data-type="${o.type}">${escHtml(o.label)}</option>`).join("")}
+      </select>
+      <button type="button" class="dk-btn" id="ui-dock-add-btn">Añadir</button>`;
+    document.getElementById("ui-dock-add-btn")?.addEventListener("click", () => {
+      const select = document.getElementById("ui-dock-add-select");
+      const selected = select?.selectedOptions[0];
+      if (!selected) return;
+      const dock2 = state.dockConfig || DEFAULT_DOCK;
+      const items = [...dock2.items, { id: selected.value, type: selected.getAttribute("data-type") }];
+      persistDockConfig({ items, iconSize: dock2.iconSize });
+    });
+  }
+
+  function renderDockManageList() {
+    const container = document.getElementById("ui-dock-list");
+    if (!container) return;
+    const dock = state.dockConfig || DEFAULT_DOCK;
+    container.innerHTML = dock.items
+      .map(
+        (item, idx) => `
+      <div class="docker-actions" style="justify-content:space-between;margin-bottom:6px">
+        <span style="flex:1">${escHtml(dockManageLabel(item))}</span>
+        <button type="button" class="dk-btn ghost" data-dock-up="${idx}" ${idx === 0 ? "disabled" : ""}>↑</button>
+        <button type="button" class="dk-btn ghost" data-dock-down="${idx}" ${idx === dock.items.length - 1 ? "disabled" : ""}>↓</button>
+        <button type="button" class="dk-btn danger" data-dock-remove="${idx}" ${dock.items.length <= 1 ? "disabled" : ""}>Quitar</button>
+      </div>`
+      )
+      .join("");
+
+    container.querySelectorAll("[data-dock-up]").forEach((btn) => {
+      btn.addEventListener("click", () => moveDockItem(Number(btn.getAttribute("data-dock-up")), -1));
+    });
+    container.querySelectorAll("[data-dock-down]").forEach((btn) => {
+      btn.addEventListener("click", () => moveDockItem(Number(btn.getAttribute("data-dock-down")), 1));
+    });
+    container.querySelectorAll("[data-dock-remove]").forEach((btn) => {
+      btn.addEventListener("click", () => removeDockItem(Number(btn.getAttribute("data-dock-remove"))));
+    });
+
+    document.querySelectorAll("[data-dock-size]").forEach((btn) => {
+      btn.classList.toggle("active-size", btn.getAttribute("data-dock-size") === dock.iconSize);
+    });
+
+    renderDockAddRow();
+  }
+
+  document.querySelectorAll("[data-dock-size]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const size = btn.getAttribute("data-dock-size");
+      const dock = state.dockConfig || DEFAULT_DOCK;
+      persistDockConfig({ items: dock.items, iconSize: size });
+    });
+  });
+
+  // —— Perfiles de interfaz 4.11.14 ——
+  // Reutiliza el dock de 4.11.7 en vez de un sistema de visibilidad de
+  // pagina aparte: un perfil es una foto guardada del dock actual, y
+  // "aplicar" es la misma persistDockConfig()/setDock() de siempre.
+  function renderProfilesList() {
+    const container = document.getElementById("ui-profiles-list");
+    if (!container) return;
+    const profilesArr = state.uiProfiles || [];
+    container.innerHTML = profilesArr.length
+      ? profilesArr
+          .map(
+            (p) => `
+        <div class="docker-actions" style="justify-content:space-between;margin-bottom:8px">
+          <button type="button" class="dk-btn ghost" data-profile-apply="${p.id}" style="flex:1;text-align:left">${escHtml(p.icon)} ${escHtml(p.name)}</button>
+          <button type="button" class="dk-btn danger" data-profile-delete="${p.id}">Eliminar</button>
+        </div>`
+          )
+          .join("")
+      : `<p class="sic-sub">Aún no has guardado ningún perfil</p>`;
+
+    container.querySelectorAll("[data-profile-apply]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-profile-apply");
+        try {
+          state.dockConfig = await api(`/api/ui/profiles/${id}/apply`, { method: "POST", body: "{}" });
+          renderDock();
+          renderDockManageList();
+          toast("Perfil aplicado");
+        } catch (err) {
+          toast(err.message || "Error al aplicar el perfil");
+        }
+      });
+    });
+    container.querySelectorAll("[data-profile-delete]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-profile-delete");
+        const profile = profilesArr.find((p) => p.id === id);
+        if (!(await askConfirm(`¿Eliminar el perfil "${profile?.name || ""}"?`))) return;
+        try {
+          await api(`/api/ui/profiles/${id}`, { method: "DELETE" });
+          state.uiProfiles = (state.uiProfiles || []).filter((p) => p.id !== id);
+          renderProfilesList();
+          toast("Perfil eliminado");
+        } catch (err) {
+          toast(err.message || "Error al eliminar");
+        }
+      });
+    });
+  }
+
+  document.getElementById("ui-profile-add-btn")?.addEventListener("click", async (e) => {
+    const nameInput = document.getElementById("ui-profile-name");
+    const iconInput = document.getElementById("ui-profile-icon");
+    const name = nameInput?.value?.trim();
+    const icon = iconInput?.value?.trim() || "🖥️";
+    if (!name) {
+      toast("Escribe un nombre para el perfil");
+      return;
+    }
+    e.target.disabled = true;
+    try {
+      const profile = await api("/api/ui/profiles", { method: "POST", body: JSON.stringify({ name, icon }) });
+      state.uiProfiles = [...(state.uiProfiles || []), profile];
+      renderProfilesList();
+      if (nameInput) nameInput.value = "";
+      if (iconInput) iconInput.value = "";
+      toast(`Perfil "${name}" guardado con el dock actual`);
+    } catch (err) {
+      toast(err.message || "Error al guardar el perfil");
+    } finally {
+      e.target.disabled = false;
+    }
+  });
+
+  // 4.11.17 - Confirmacion SIEMPRE real, igual que en la importacion de
+  // backups de 4.10.14: esto borra dock personalizado, paginas, perfiles y
+  // fondo de golpe - no se salta con "confirmar acciones destructivas: no"
+  // (4.10.12), es la accion mas destructiva de toda la personalizacion.
+  // 4.16.9 - showConfirmModal() (a diferencia de askConfirm()) nunca
+  // comprueba confirmDestructive, asi que sigue siendo siempre-real sin
+  // depender del dialogo nativo del navegador.
+  document.getElementById("ui-restore-factory-btn")?.addEventListener("click", async (e) => {
+    const ok = await showConfirmModal({
+      title: "¿Restaurar diseño de fábrica?",
+      message: "Se perderán el dock personalizado, las páginas, los perfiles y el fondo que hayas configurado. Esto no se puede deshacer.",
+      confirmLabel: "Restaurar",
+    });
+    if (!ok) {
+      return;
+    }
+    e.target.disabled = true;
+    toast("Restaurando diseño de fábrica…");
+    try {
+      await api("/api/ui/layout/reset", { method: "POST", body: "{}" });
+      toast("Diseño de fábrica restaurado — recargando…");
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (err) {
+      toast(err.message || "Error al restaurar");
+      e.target.disabled = false;
+    }
+  });
+
+  document.getElementById("ui-page-add-btn")?.addEventListener("click", async (e) => {
+    const nameInput = document.getElementById("ui-page-name");
+    const iconInput = document.getElementById("ui-page-icon");
+    const name = nameInput?.value?.trim();
+    const icon = iconInput?.value?.trim() || "📄";
+    if (!name) {
+      toast("Escribe un nombre para la página");
+      return;
+    }
+    e.target.disabled = true;
+    try {
+      const page = await api("/api/ui/pages", { method: "POST", body: JSON.stringify({ name, icon }) });
+      state.uiPages = [...(state.uiPages || []), page];
+      renderUiPagesList();
+      if (nameInput) nameInput.value = "";
+      if (iconInput) iconInput.value = "";
+      toast("Página creada");
+    } catch (err) {
+      toast(err.message || "Error al crear la página");
+    } finally {
+      e.target.disabled = false;
+    }
+  });
+
+  // —— Widgets 4.11.5 ——
+  // El registro de tipos vive en el frontend (label/icono); el backend solo
+  // valida que el "type" recibido sea uno conocido (misma lista duplicada
+  // deliberadamente en uiPagesService.js - es una allowlist, no logica).
+  // Cada widget lee datos que la app YA tiene en `state` (system/docker/
+  // spotify/agentDevices/weatherData/unseenCount) - cero fetches nuevos.
+  const WIDGET_TYPES = {
+    cpu: { label: "CPU", icon: "🧠" },
+    ram: { label: "RAM", icon: "💾" },
+    gpu: { label: "GPU (MI-PC)", icon: "🎮" },
+    temp: { label: "Temperatura", icon: "🌡️" },
+    docker: { label: "Docker", icon: "🐳" },
+    spotify: { label: "Spotify", icon: "🎵" },
+    clock: { label: "Reloj", icon: "🕐" },
+    calendar: { label: "Calendario", icon: "📅" },
+    weather: { label: "Clima", icon: "☀️" },
+    network: { label: "Red (MI-PC)", icon: "📡" },
+    alerts: { label: "Alertas", icon: "🚨" },
+    mipc: { label: "MI-PC", icon: "🖥️" },
+  };
+
+  function findMipcDevice() {
+    return (state.agentDevices?.devices || []).find((d) => d.id === "mi-pc") || null;
+  }
+
+  function widgetValueLabel(type) {
+    const sys = state.system || {};
+    const mipc = findMipcDevice();
+    switch (type) {
+      case "cpu":
+        return { value: sys.cpu != null ? `${sys.cpu}%` : "—", label: "CPU (BMO)" };
+      case "ram":
+        return { value: sys.ramPercent != null ? `${sys.ramPercent}%` : "—", label: "RAM (BMO)" };
+      case "gpu": {
+        const pct = mipc?.metrics?.gpu?.usage_pct;
+        return { value: pct != null ? `${pct}%` : "—", label: "GPU (MI-PC)" };
+      }
+      case "temp":
+        return { value: sys.temp != null ? `${sys.temp}°C` : "—", label: "Temperatura (BMO)" };
+      case "docker": {
+        const d = state.docker || {};
+        const total = (d.containers || []).length;
+        return { value: `${d.running ?? "—"}/${total}`, label: "Docker activos" };
+      }
+      case "spotify": {
+        const sp = state.spotify;
+        let v = "Sin conectar";
+        if (sp?.connected) v = sp.playing ? "▶ Reproduciendo" : "⏸ Listo";
+        return { value: v, label: "Spotify" };
+      }
+      case "clock": {
+        const now = new Date();
+        return {
+          value: now.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", hour12: false }),
+          label: "Hora",
+        };
+      }
+      case "calendar":
+        return { value: "—", label: "Sin integración de calendario todavía" };
+      case "weather": {
+        const w = state.weatherData;
+        return {
+          value: w?.temp != null ? `${w.icon || "☀"} ${Math.round(w.temp)}°` : "—",
+          label: `Clima ${state.weatherCity || ""}`,
+        };
+      }
+      case "network": {
+        const net = mipc?.network;
+        return {
+          value: net ? `↓${net.down_kbps ?? "—"} ↑${net.up_kbps ?? "—"} kbps` : "—",
+          label: "Red (MI-PC)",
+        };
+      }
+      case "alerts":
+        return { value: state.unseenCount != null ? String(state.unseenCount) : "—", label: "Alertas sin ver" };
+      case "mipc":
+        return { value: mipc ? (mipc.online ? "🟢 Online" : "🔴 Offline") : "—", label: "MI-PC" };
+      default:
+        return { value: "—", label: "Widget desconocido" };
+    }
+  }
+
+  // 4.11.6 - Tamanos de widget. Con una grid de 2 columnas, "grande" y
+  // "completo" ocupan el ancho entero (la diferencia entre ambos es la
+  // cantidad de detalle, no el ancho); "pequeno" omite la etiqueta de texto
+  // para ser mas compacto; "mediano" es el aspecto por defecto de 4.11.5.
+  const WIDGET_SIZE_CYCLE = ["pequeno", "mediano", "grande", "completo"];
+  const WIDGET_SIZE_SHORT = { pequeno: "P", mediano: "M", grande: "G", completo: "C" };
+
+  function widgetPercentFor(type) {
+    const sys = state.system || {};
+    const mipc = findMipcDevice();
+    if (type === "cpu") return sys.cpu != null ? Number(sys.cpu) : null;
+    if (type === "ram") return sys.ramPercent != null ? Number(sys.ramPercent) : null;
+    if (type === "gpu") {
+      const pct = mipc?.metrics?.gpu?.usage_pct;
+      return pct != null ? Number(pct) : null;
+    }
+    if (type === "temp") {
+      // escala aproximada 0-90C -> 0-100%, solo para la barra visual
+      return sys.temp != null ? Math.max(0, Math.min(100, Math.round((Number(sys.temp) / 90) * 100))) : null;
+    }
+    return null;
+  }
+
+  function widgetCardHtml(widget) {
+    const meta = WIDGET_TYPES[widget.type] || { label: widget.type, icon: "❔" };
+    const { value, label } = widgetValueLabel(widget.type);
+    const size = widget.size || "mediano";
+    const pct = widgetPercentFor(widget.type);
+    const showBar = pct != null && (size === "grande" || size === "completo");
+    const barHtml = showBar
+      ? `<div class="widget-bar"><div class="widget-bar-fill" style="width:${pct}%"></div></div>`
+      : "";
+    const controlsHtml = state.customPageManaging
+      ? `<div class="widget-card-controls">
+           <button type="button" class="widget-size-btn" data-widget-size="${widget.id}">${WIDGET_SIZE_SHORT[size] || "M"}</button>
+           <button type="button" class="widget-remove-btn" data-widget-remove="${widget.id}">✕</button>
+         </div>`
+      : "";
+    return `
+      <div class="widget-card widget-size-${size}">
+        ${controlsHtml}
+        <span style="font-size:1.1rem">${meta.icon}</span>
+        <span class="widget-value">${escHtml(value)}</span>
+        ${size !== "pequeno" ? `<span class="widget-label">${escHtml(label)}</span>` : ""}
+        ${barHtml}
+      </div>`;
+  }
+
+  function renderCustomPageWidgets() {
+    const page = state.currentCustomPage;
+    const container = document.getElementById("custom-page-widgets");
+    if (!page || !container) return;
+    const widgets = page.widgets || [];
+    container.innerHTML = widgets.length
+      ? widgets.map(widgetCardHtml).join("")
+      : `<p class="sic-sub">Esta página está vacía. Pulsa "Gestionar" para añadir widgets.</p>`;
+    container.querySelectorAll("[data-widget-remove]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const widgetId = btn.getAttribute("data-widget-remove");
+        try {
+          const updated = await api(`/api/ui/pages/${page.id}/widgets/${widgetId}`, { method: "DELETE" });
+          state.currentCustomPage = updated;
+          const idx = (state.uiPages || []).findIndex((p) => p.id === page.id);
+          if (idx >= 0) state.uiPages[idx] = updated;
+          renderCustomPageWidgets();
+        } catch (err) {
+          toast(err.message || "Error al quitar widget");
+        }
+      });
+    });
+    container.querySelectorAll("[data-widget-size]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const widgetId = btn.getAttribute("data-widget-size");
+        const w = (page.widgets || []).find((x) => x.id === widgetId);
+        if (!w) return;
+        const currentIdx = WIDGET_SIZE_CYCLE.indexOf(w.size || "mediano");
+        const nextSize = WIDGET_SIZE_CYCLE[(currentIdx + 1) % WIDGET_SIZE_CYCLE.length];
+        try {
+          const updated = await api(`/api/ui/pages/${page.id}/widgets/${widgetId}/size`, {
+            method: "PUT",
+            body: JSON.stringify({ size: nextSize }),
+          });
+          state.currentCustomPage = updated;
+          const idx = (state.uiPages || []).findIndex((p) => p.id === page.id);
+          if (idx >= 0) state.uiPages[idx] = updated;
+          renderCustomPageWidgets();
+        } catch (err) {
+          toast(err.message || "Error al cambiar tamaño");
+        }
+      });
+    });
+  }
+
+  function renderWidgetPicker() {
+    const picker = document.getElementById("custom-page-widget-picker");
+    if (!picker) return;
+    picker.innerHTML = Object.entries(WIDGET_TYPES)
+      .map(
+        ([type, meta]) => `
+      <button type="button" class="sys-icon-card" data-widget-add="${type}">
+        <span class="sic-ico sic-blue">${meta.icon}</span>
+        <span class="sic-title">${meta.label}</span>
+      </button>`
+      )
+      .join("");
+    picker.querySelectorAll("[data-widget-add]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const type = btn.getAttribute("data-widget-add");
+        const page = state.currentCustomPage;
+        if (!page) return;
+        try {
+          const updated = await api(`/api/ui/pages/${page.id}/widgets`, {
+            method: "POST",
+            body: JSON.stringify({ type }),
+          });
+          state.currentCustomPage = updated;
+          const idx = (state.uiPages || []).findIndex((p) => p.id === page.id);
+          if (idx >= 0) state.uiPages[idx] = updated;
+          renderCustomPageWidgets();
+          toast("Widget añadido");
+        } catch (err) {
+          toast(err.message || "Error al añadir widget");
+        }
+      });
+    });
+  }
+
+  function openCustomPagePanel(page) {
+    if (!els.customPagePanel) return;
+    state.currentCustomPage = page;
+    state.customPageManaging = false;
+    if (els.customPageTitle) els.customPageTitle.textContent = `${page.icon} ${page.name}`;
+    const addWidgetBox = document.getElementById("custom-page-add-widget");
+    if (addWidgetBox) addWidgetBox.hidden = true;
+    const manageBtn = document.getElementById("custom-page-manage-btn");
+    if (manageBtn) manageBtn.textContent = "Gestionar";
+    renderWidgetPicker();
+    renderCustomPageWidgets();
+    closeNavegacionPanel();
+    els.customPagePanel.hidden = false;
+    // Refresca los valores de los widgets mientras la pagina esta abierta,
+    // igual que otros paneles con datos en vivo (Estado/Actividad/Salud).
+    if (state.customPageTimer) clearInterval(state.customPageTimer);
+    state.customPageTimer = setInterval(() => {
+      if (!state.customPageManaging) renderCustomPageWidgets();
+    }, 5000);
+  }
+
+  document.getElementById("custom-page-manage-btn")?.addEventListener("click", () => {
+    if (!state.customPageManaging && !requireEditUnlocked()) return;
+    state.customPageManaging = !state.customPageManaging;
+    const btn = document.getElementById("custom-page-manage-btn");
+    if (btn) btn.textContent = state.customPageManaging ? "Listo" : "Gestionar";
+    const addWidgetBox = document.getElementById("custom-page-add-widget");
+    if (addWidgetBox) addWidgetBox.hidden = !state.customPageManaging;
+    renderCustomPageWidgets();
+  });
+
+  els.customPageBack?.addEventListener("click", () => {
+    closeCustomPagePanel();
+    openNavegacionPanel().catch(() => {});
+  });
+
+  // —— Dock inferior configurable 4.11.7 ——
+  // Los 4 iconos SVG fijos son exactamente los que antes estaban escritos a
+  // mano en index.html - se movieron aqui tal cual, no se redisenaron. El
+  // dock ahora se genera desde config en vez de HTML estatico, pero el
+  // aspecto/comportamiento de los 4 botones fijos no cambia.
+  const FIXED_NAV_META = {
+    inicio: {
+      label: "Inicio",
+      svg: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5z"/></svg>`,
+    },
+    servicios: {
+      label: "Servicios",
+      svg: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7.5 12 12l8-4.5L12 3z"/><path d="M4 12.5 12 17l8-4.5"/><path d="M4 16.5 12 21l8-4.5"/></svg>`,
+    },
+    sistema: {
+      label: "Sistema",
+      svg: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.4 5.4l1.7 1.7M16.9 16.9l1.7 1.7M18.6 5.4l-1.7 1.7M7.1 16.9l-1.7 1.7"/></svg>`,
+      badge: true,
+    },
+    dispositivos: {
+      label: "Dispositivos",
+      svg: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="18" rx="2.2"/><path d="M11 18h2"/></svg>`,
+    },
+  };
+
+  const DEFAULT_DOCK = {
+    items: [
+      { id: "inicio", type: "fixed" },
+      { id: "servicios", type: "fixed" },
+      { id: "sistema", type: "fixed" },
+      { id: "dispositivos", type: "fixed" },
+    ],
+    iconSize: "normal",
+  };
+
+  function dockItemHtml(item) {
+    if (item.type === "fixed") {
+      const meta = FIXED_NAV_META[item.id];
+      if (!meta) return "";
+      const badgeHtml = meta.badge ? `<span class="nav-badge" id="nav-badge-sistema" hidden>0</span>` : "";
+      return `
+        <button class="nav-item" data-nav="${item.id}" type="button">
+          <span class="nav-ico" aria-hidden="true">${meta.svg}${badgeHtml}</span>
+          <span>${escHtml(meta.label)}</span>
+        </button>`;
+    }
+    const page = (state.uiPages || []).find((p) => p.id === item.id);
+    if (!page) return "";
+    const iconSize = (state.dockConfig || DEFAULT_DOCK).iconSize || "normal";
+    const emojiPx = { pequeno: 18, normal: 20, grande: 28 }[iconSize] || 20;
+    return `
+      <button class="nav-item" data-nav-custom="${item.id}" type="button">
+        <span class="nav-ico" aria-hidden="true" style="font-size:${emojiPx}px;line-height:1">${escHtml(page.icon)}</span>
+        <span>${escHtml(page.name)}</span>
+      </button>`;
+  }
+
+  function renderDock() {
+    const dock = state.dockConfig || DEFAULT_DOCK;
+    const nav = document.getElementById("app-nav");
+    if (!nav) return;
+    nav.className = `nav dock-size-${dock.iconSize || "normal"}`;
+    nav.style.gridTemplateColumns = `repeat(${Math.max(1, dock.items.length)}, 1fr)`;
+    nav.innerHTML = dock.items.map(dockItemHtml).join("");
+    nav.querySelectorAll(".nav-item").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.nav === state.appNav);
+      btn.addEventListener("click", () => {
+        if (btn.disabled) return;
+        if (btn.dataset.navCustom) {
+          const page = (state.uiPages || []).find((p) => p.id === btn.dataset.navCustom);
+          if (page) openCustomPagePanel(page);
+          return;
+        }
+        setAppNav(btn.dataset.nav);
+      });
+    });
+    // El span del badge de Sistema se recrea en cada render - re-capturar
+    // la referencia y re-aplicar el valor actual, si no el badge quedaria
+    // "vivo" solo hasta el primer redibujado del dock.
+    els.navBadgeSistema = document.getElementById("nav-badge-sistema");
+    setNotificationBadge(state.unseenCount || 0);
+  }
+
+  // —— Menú rápido 4.11.9 ——
+  els.quickMenuPanel = document.getElementById("quick-menu-panel");
+  els.quickMenuBody = document.getElementById("quick-menu-body");
+  els.quickMenuBack = document.getElementById("quick-menu-back");
+
+  function closeQuickMenuPanel() {
+    if (els.quickMenuPanel) els.quickMenuPanel.hidden = true;
+  }
+
+  // 4.11.10 - Ejecucion "de un toque" compartida entre el Menu rapido
+  // (4.11.9) y los tiles de Escenas en Inicio - una sola implementacion,
+  // no una copia por sitio donde aparecen tiles de escena.
+  async function runQuickScene(id, name, btn) {
+    if (btn) btn.disabled = true;
+    toast(`Ejecutando ${name || "escena"}…`);
+    try {
+      const result = await api(`/api/scenes/${id}/run`, { method: "POST", body: "{}" });
+      toast(result.success !== false ? `✓ ${name || "Escena"} ejecutada` : `⚠️ ${name || "Escena"}: revisa el resultado`);
+    } catch (err) {
+      toast(err.message || "Error al ejecutar escena");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  function sceneTileHtml(s) {
+    return `
+      <button type="button" class="sys-icon-card" data-scene-tile="${s.id}">
+        <span class="sic-ico sic-purple">🎬</span>
+        <span class="sic-title">${escHtml(s.name)}</span>
+      </button>`;
+  }
+
+  function bindSceneTiles(container, scenesArr) {
+    container.querySelectorAll("[data-scene-tile]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-scene-tile");
+        const scene = scenesArr.find((s) => s.id === id);
+        runQuickScene(id, scene?.name, btn);
+      });
+    });
+  }
+
+  function renderQuickMenuBody() {
+    if (!els.quickMenuBody) return;
+    const mipc = findMipcDevice();
+    const docker = state.docker || {};
+    const sp = state.spotify;
+    const scenesArr = state.scenes || [];
+
+    const statusRow = (icon, label, value) => `
+      <div class="docker-actions" style="justify-content:space-between;margin-bottom:8px">
+        <span>${icon} ${escHtml(label)}</span>
+        <strong>${escHtml(value)}</strong>
+      </div>`;
+
+    const statusHtml = `
+      <div class="plugin-card" style="margin-bottom:10px">
+        ${statusRow("🖥️", "MI-PC", mipc ? (mipc.online ? "🟢 Online" : "🔴 Offline") : "—")}
+        ${statusRow("🐳", "Docker", docker.docker === "online" ? `🟢 ${docker.running ?? 0} activos` : "🔴 Offline")}
+        ${statusRow("🎵", "Spotify", sp?.connected ? (sp.playing ? "▶️ Reproduciendo" : "⏸ Listo") : "Sin conectar")}
+        ${statusRow("🔔", "Alertas", state.unseenCount != null ? String(state.unseenCount) : "—")}
+      </div>`;
+
+    const scenesHtml = scenesArr.length
+      ? `<div class="plugin-card">
+          <strong>Escenas</strong>
+          <div class="sys-grid-2" style="margin-top:8px">
+            ${scenesArr.map(sceneTileHtml).join("")}
+          </div>
+        </div>`
+      : `<div class="plugin-card"><strong>Escenas</strong><p class="sic-sub">Sin escenas creadas todavía — créalas en Sistema → Escenas</p></div>`;
+
+    els.quickMenuBody.innerHTML = statusHtml + scenesHtml;
+    bindSceneTiles(els.quickMenuBody, scenesArr);
+  }
+
+  async function openQuickMenuPanel() {
+    if (!els.quickMenuPanel) {
+      toast("Menú rápido no disponible");
+      return;
+    }
+    closeAllSysPanels();
+    try {
+      const data = await api("/api/scenes");
+      state.scenes = data.scenes || [];
+    } catch {
+      /* se muestra lo que ya hubiera en cache, o la lista vacia */
+    }
+    renderQuickMenuBody();
+    els.quickMenuPanel.hidden = false;
+  }
+
+  els.quickMenuBack?.addEventListener("click", () => {
+    closeQuickMenuPanel();
+    openSysHub();
+  });
+
+  async function loadDockConfig() {
+    try {
+      const [dockData, pagesData] = await Promise.all([api("/api/ui/dock"), api("/api/ui/pages")]);
+      state.dockConfig = dockData;
+      state.uiPages = pagesData.pages || [];
+      renderDock();
+    } catch {
+      // se queda con el dock por defecto ya renderizado
+    }
+  }
+
+  // —— Modo edición seguro 4.11.15 ——
+  // Candado GLOBAL, en memoria (no persistido - se resetea a bloqueado en
+  // cada carga de la pagina, a proposito: si el kiosco se deja abierto,
+  // tras un refresh vuelve a estar protegido, no queda desbloqueado para
+  // siempre). No oculta los controles de edicion ya construidos en 4.11.2/
+  // 4.11.5/4.11.7 - los deja exactamente donde estan, pero cada uno
+  // consulta requireEditUnlocked() antes de activar su propio modo de
+  // edicion, en vez de reconstruir esos flujos desde cero.
+  state.editModeUnlocked = false;
+
+  function requireEditUnlocked() {
+    if (state.editModeUnlocked) return true;
+    toast("🔒 Modo edición bloqueado — mantén pulsada la pantalla principal para desbloquear");
+    return false;
+  }
+
+  function toggleEditModeUnlocked() {
+    state.editModeUnlocked = !state.editModeUnlocked;
+    toast(state.editModeUnlocked ? "🔓 Modo edición desbloqueado" : "🔒 Interfaz bloqueada");
+  }
+
+  // —— Gestos táctiles 4.11.8 ——
+  // Deliberadamente con "zonas de guarda" para no interferir con gestos que
+  // YA tienen su propio manejo (paginador de Servicios 4.11.3, arrastre de
+  // reordenar 4.11.2) ni con el scroll vertical normal dentro de paneles
+  // largos (Eventos, Actividad, etc.) - sin poder probar el tacto real en el
+  // dispositivo, la prioridad es no romper nada que ya funcione.
+  function anyOverlayOpen() {
+    return !!document.querySelector(".sys-sub-panel:not([hidden])");
+  }
+
+  function fixedPagesInDockOrder() {
+    const dock = state.dockConfig || DEFAULT_DOCK;
+    return dock.items.filter((i) => i.type === "fixed").map((i) => i.id);
+  }
+
+  function swipeToAdjacentPage(direction) {
+    const pages = fixedPagesInDockOrder();
+    if (pages.length < 2) return;
+    const idx = pages.indexOf(state.appNav);
+    if (idx === -1) return;
+    const nextIdx = (idx + direction + pages.length) % pages.length;
+    setAppNav(pages[nextIdx]);
+  }
+
+  const GESTURE_LONG_PRESS_MS = 550;
+  const GESTURE_DOUBLE_TAP_MS = 320;
+  const GESTURE_MIN_DELTA = 50;
+
+  function initGlobalGestures() {
+    const root = document.querySelector(".app");
+    if (!root) return;
+    let start = null;
+    let longPressTimer = null;
+    let lastTapAt = 0;
+
+    function inGuardedZone(target) {
+      return !!target.closest(".services-pager, .services-grid.reordering, .sys-sub-panel, #app-nav");
+    }
+
+    root.addEventListener("pointerdown", (e) => {
+      start = { x: e.clientX, y: e.clientY, t: Date.now(), guarded: inGuardedZone(e.target), inHeader: !!e.target.closest(".header") };
+      if (!start.guarded) {
+        longPressTimer = setTimeout(() => {
+          longPressTimer = null;
+          if (start && !anyOverlayOpen()) {
+            toggleEditModeUnlocked();
+          }
+        }, GESTURE_LONG_PRESS_MS);
+      }
+    });
+
+    root.addEventListener("pointerup", (e) => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+      if (!start || start.guarded) {
+        start = null;
+        return;
+      }
+      const dx = e.clientX - start.x;
+      const dy = e.clientY - start.y;
+      const dt = Date.now() - start.t;
+      const wasHeader = start.inHeader;
+      start = null;
+
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+
+      // Toque simple (sin desplazamiento apreciable)
+      if (absX < GESTURE_MIN_DELTA && absY < GESTURE_MIN_DELTA) {
+        if (wasHeader) {
+          const now = Date.now();
+          if (now - lastTapAt < GESTURE_DOUBLE_TAP_MS) {
+            lastTapAt = 0;
+            openEstadoPanel().catch(() => {});
+          } else {
+            lastTapAt = now;
+          }
+        }
+        return;
+      }
+
+      if (anyOverlayOpen()) return; // solo navegar/abrir paneles desde una vista principal limpia
+
+      if (absX > absY && absX >= GESTURE_MIN_DELTA) {
+        swipeToAdjacentPage(dx < 0 ? 1 : -1); // izquierda -> siguiente, derecha -> anterior
+      } else if (absY > absX && absY >= GESTURE_MIN_DELTA && wasHeader) {
+        if (dy < 0) {
+          openQuickMenuPanel().catch(() => {}); // swipe arriba
+        } else {
+          openEventsPanel().catch(() => {}); // swipe abajo -> notificaciones
+        }
+      }
+    });
+
+    root.addEventListener("pointercancel", () => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+      start = null;
+    });
   }
 
   // —— Tareas 4.10.6 ——
@@ -5844,6 +7513,10 @@
     try {
       const data = await api("/api/events?limit=80");
       state.eventsRecent = { events: data.recent || data.events || [] };
+      // 4.10.18 - esta respuesta ya trae unseenCount; evita un segundo
+      // round-trip a /api/events solo para el badge en el ciclo de refresh().
+      setNotificationBadge(data.unseenCount || 0);
+      state.unseenCount = data.unseenCount || 0; // 4.11.5 - para el widget de alertas
       if (!els.eventsPanel?.hidden) renderEventsBody();
     } catch (err) {
       if (els.eventsBody && !els.eventsPanel?.hidden) {
@@ -6763,12 +8436,18 @@
     sleep: { title: "¿Suspender MI-PC?", msg: "El equipo entrará en suspensión.", verb: "Suspender" },
   };
 
-  function askPowerConfirm(action) {
-    const meta = POWER_META[action] || { title: "¿Confirmar acción?", msg: "", verb: "Confirmar" };
-    if (!els.powerConfirmPanel) return Promise.resolve(window.confirm(meta.title));
-    els.powerConfirmTitle.textContent = meta.title;
-    els.powerConfirmMsg.textContent = meta.msg;
-    els.powerConfirmOk.textContent = meta.verb;
+  // 4.16.9 - Modal de confirmacion compacto y reutilizable (ya existia,
+  // pero solo para acciones de energia - generalizado aqui para
+  // sustituir TODOS los window.confirm() nativos del navegador, que no
+  // encajan con un kiosco sin chrome de navegador visible). Solo puede
+  // haber una confirmacion en pantalla a la vez, asi que reutiliza el
+  // mismo overlay/DOM en vez de crear uno nuevo por cada llamada.
+  function showConfirmModal({ title, message, confirmLabel, cancelLabel } = {}) {
+    if (!els.powerConfirmPanel) return Promise.resolve(window.confirm(title || message || "¿Confirmar?"));
+    els.powerConfirmTitle.textContent = title || "¿Confirmar acción?";
+    els.powerConfirmMsg.textContent = message || "";
+    els.powerConfirmOk.textContent = confirmLabel || "Confirmar";
+    els.powerConfirmCancel.textContent = cancelLabel || "Cancelar";
     els.powerConfirmPanel.hidden = false;
     return new Promise((resolve) => {
       const cleanup = () => {
@@ -6787,6 +8466,11 @@
       els.powerConfirmOk.addEventListener("click", onOk);
       els.powerConfirmCancel.addEventListener("click", onCancel);
     });
+  }
+
+  function askPowerConfirm(action) {
+    const meta = POWER_META[action] || { title: "¿Confirmar acción?", msg: "", verb: "Confirmar" };
+    return showConfirmModal({ title: meta.title, message: meta.msg, confirmLabel: meta.verb });
   }
 
   async function runPowerAction(deviceId, action) {
@@ -6920,7 +8604,20 @@
     closeHealthPanel();
     closeMaintenancePanel();
     closeSettingsPanel();
-    closeServiceFrame();
+    closePersonalizacionPanel();
+    closeNavegacionPanel();
+    closeCustomPagePanel();
+    closeQuickMenuPanel();
+    closeAparienciaPanel();
+    closePantallasPanel();
+    closeAiPanel();
+    closeGesturememePanel();
+    closeIntegrationsPanel();
+    closeAccountsPanel();
+    closePublicApiPanel();
+    closeRecoveryPanel();
+    closeSecurityCenterPanel();
+    closeSteamPanel();
   }
 
   function openSysHub() {
@@ -7091,6 +8788,922 @@
           .join("")
       : `<p class="tagline">No hay plugins instalados.</p>`;
   }
+
+  // —— 4.12 BMO AI ——
+  els.aiPanel = document.getElementById("ai-panel");
+  els.aiBody = document.getElementById("ai-body");
+  els.aiBack = document.getElementById("ai-back");
+  els.aiSettingsBtn = document.getElementById("ai-settings-btn");
+
+  state.aiView = "chat"; // "chat" | "settings"
+  state.aiStatus = null; // {provider, model, enabled, configured}
+  state.aiLog = []; // [{role:"user"|"assistant", text, pending, pendingId, tool, params}]
+  state.aiBusy = false;
+
+  const AI_QUICK_PROMPTS = [
+    "¿Cómo está MI-PC?",
+    "¿Hay alguna alerta?",
+    "Estado general del sistema",
+    "¿Por qué va lento MI-PC?",
+  ];
+
+  function closeAiPanel() {
+    if (els.aiPanel) els.aiPanel.hidden = true;
+  }
+
+  // —— Gato-Cam (gesture-meme, iframe embebido, mismo origen) ——
+  els.gesturememePanel = document.getElementById("gesturememe-panel");
+  els.gesturememeBack = document.getElementById("gesturememe-back");
+  els.gesturememeIframe = document.getElementById("gesturememe-iframe");
+
+  function closeGesturememePanel() {
+    if (els.gesturememePanel) els.gesturememePanel.hidden = true;
+    // Al vaciar el src se libera la cámara (se detiene el stream de getUserMedia).
+    if (els.gesturememeIframe) els.gesturememeIframe.src = "about:blank";
+  }
+
+  function openGesturememePanel() {
+    closeSysHub();
+    if (!els.gesturememePanel) return;
+    els.gesturememePanel.hidden = false;
+    if (els.gesturememeIframe) els.gesturememeIframe.src = "/gesture-meme/?t=" + Date.now();
+  }
+
+  els.gesturememeBack?.addEventListener("click", () => {
+    closeGesturememePanel();
+    openSysHub();
+  });
+  els.gesturememePanel?.addEventListener("click", (e) => {
+    if (e.target === els.gesturememePanel) {
+      closeGesturememePanel();
+      openSysHub();
+    }
+  });
+
+  function aiMsgBubbleHtml(entry) {
+    if (entry.pending) {
+      return `<div class="ai-msg bot">
+        <div class="ai-confirm-card">
+          <p><strong>Confirmación necesaria</strong></p>
+          <p class="tagline">${escHtml(entry.tool)} · ${escHtml(JSON.stringify(entry.params || {}))}</p>
+          <div class="ai-confirm-actions">
+            <button type="button" class="dk-btn ghost" data-ai-confirm="0" data-ai-pending="${escHtml(entry.pendingId)}">Cancelar</button>
+            <button type="button" class="dk-btn" data-ai-confirm="1" data-ai-pending="${escHtml(entry.pendingId)}">Ejecutar</button>
+          </div>
+        </div>
+      </div>`;
+    }
+    const cls = entry.role === "user" ? "user" : "bot";
+    return `<div class="ai-msg ${cls}">${escHtml(entry.text || "")}</div>`;
+  }
+
+  function renderAiChatView() {
+    const isOllama = state.aiStatus && state.aiStatus.provider === "ollama";
+    const quickHtml = AI_QUICK_PROMPTS.map(
+      (q) => `<button type="button" class="ai-quick-tile" data-ai-quick="${escHtml(q)}">${escHtml(q)}</button>`
+    ).join("");
+    const logHtml = state.aiLog.length
+      ? state.aiLog.map(aiMsgBubbleHtml).join("")
+      : `<p class="tagline" style="padding:12px 0">¿Qué necesitas? Puedo consultar el estado del sistema o ejecutar escenas (con tu confirmación).</p>`;
+    els.aiBody.innerHTML = `
+      ${isOllama ? `<p class="tagline ai-ollama-note">🐢 Modelo local (Ollama) — puede tardar varios minutos en responder.</p>` : ""}
+      <div class="ai-quick-tiles">${quickHtml}</div>
+      <div class="ai-chat-log" id="ai-chat-log">${logHtml}</div>
+      <form id="ai-chat-form" class="ai-chat-form">
+        <input type="text" id="ai-chat-input" placeholder="Escribe algo..." autocomplete="off" ${state.aiBusy ? "disabled" : ""} />
+        <button type="submit" class="dk-btn" ${state.aiBusy ? "disabled" : ""}>${state.aiBusy ? "..." : "Enviar"}</button>
+      </form>`;
+
+    const log = document.getElementById("ai-chat-log");
+    if (log) log.scrollTop = log.scrollHeight;
+
+    document.getElementById("ai-chat-form")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const input = document.getElementById("ai-chat-input");
+      const text = (input?.value || "").trim();
+      if (!text) return;
+      input.value = "";
+      submitAiChat(text);
+    });
+    els.aiBody.querySelectorAll("[data-ai-quick]").forEach((btn) => {
+      btn.addEventListener("click", () => submitAiChat(btn.getAttribute("data-ai-quick")));
+    });
+    els.aiBody.querySelectorAll("[data-ai-confirm]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        confirmAiAction(btn.getAttribute("data-ai-pending"), btn.getAttribute("data-ai-confirm") === "1");
+      });
+    });
+  }
+
+  function renderAiNotConfiguredView() {
+    els.aiBody.innerHTML = `
+      <p class="tagline" style="padding:12px 0">BMO AI todavía no está configurada. Añade una API key de Anthropic para activarla.</p>
+      <button type="button" class="dk-btn" id="ai-go-settings">Configurar ahora</button>`;
+    document.getElementById("ai-go-settings")?.addEventListener("click", () => {
+      state.aiView = "settings";
+      renderAiPanel();
+    });
+  }
+
+  const AI_PROVIDER_DEFAULT_MODEL = { anthropic: "claude-sonnet-4-5-20250929", ollama: "qwen3:4b" };
+
+  function renderAiSettingsView() {
+    const s = state.aiStatus || {};
+    const provider = s.provider === "ollama" ? "ollama" : "anthropic";
+    els.aiBody.innerHTML = `
+      <form id="ai-settings-form" class="ai-settings-form">
+        <label>Proveedor
+          <select name="provider" id="ai-provider-select">
+            <option value="anthropic" ${provider === "anthropic" ? "selected" : ""}>Anthropic Claude (nube)</option>
+            <option value="ollama" ${provider === "ollama" ? "selected" : ""}>Ollama (local, en este Pi)</option>
+          </select>
+        </label>
+        <p class="tagline ai-ollama-note" ${provider === "ollama" ? "" : "hidden"}>
+          Corre en la propia Raspberry Pi: gratis y sin API key, pero lento (varios minutos por respuesta con qwen3:4b en esta CPU).
+        </p>
+        <div id="ai-apikey-field" ${provider === "ollama" ? "hidden" : ""}>
+          <label>API key ${s.configured && provider === "anthropic" ? "(ya configurada — deja en blanco para no cambiarla)" : ""}
+            <input type="password" name="apiKey" autocomplete="off" placeholder="${s.configured && provider === "anthropic" ? "••••••••" : "sk-ant-..."}" />
+          </label>
+        </div>
+        <label>Modelo
+          <input type="text" name="model" value="${escHtml(s.model || AI_PROVIDER_DEFAULT_MODEL[provider])}" />
+        </label>
+        <label class="ai-settings-check">
+          <input type="checkbox" name="enabled" ${s.enabled !== false ? "checked" : ""} />
+          Activada
+        </label>
+        <button type="submit" class="dk-btn">Guardar</button>
+      </form>
+      ${aiPreferencesFormHtml()}`;
+
+    const providerSelect = document.getElementById("ai-provider-select");
+    const apiKeyField = document.getElementById("ai-apikey-field");
+    const ollamaNote = els.aiBody.querySelector(".ai-ollama-note");
+    const modelInput = document.querySelector("#ai-settings-form [name=model]");
+    providerSelect?.addEventListener("change", () => {
+      const isOllama = providerSelect.value === "ollama";
+      if (apiKeyField) apiKeyField.hidden = isOllama;
+      if (ollamaNote) ollamaNote.hidden = !isOllama;
+      if (modelInput && !modelInput.value) modelInput.value = AI_PROVIDER_DEFAULT_MODEL[providerSelect.value];
+    });
+
+    document.getElementById("ai-settings-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try {
+        state.aiStatus = await api("/api/ai/settings", {
+          method: "POST",
+          body: JSON.stringify({
+            provider: fd.get("provider"),
+            apiKey: fd.get("apiKey") || undefined,
+            model: fd.get("model"),
+            enabled: fd.get("enabled") === "on",
+          }),
+        });
+        toast("Ajustes de IA guardados");
+        state.aiView = "chat";
+        renderAiPanel();
+      } catch (err) {
+        toast(err.message || "No se pudo guardar");
+      }
+    });
+
+    document.getElementById("ai-prefs-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const known = state.aiPreferencesKnown || {};
+      const patch = {};
+      for (const key of Object.keys(known)) {
+        if (typeof known[key].default === "boolean") {
+          patch[key] = fd.get(key) === "on";
+        } else {
+          const v = fd.get(key);
+          patch[key] = v && String(v).trim() ? v : null;
+        }
+      }
+      try {
+        const res = await api("/api/ai/preferences", { method: "POST", body: JSON.stringify(patch) });
+        state.aiPreferences = res.preferences;
+        toast("Preferencias guardadas");
+      } catch (err) {
+        toast(err.message || "No se pudo guardar");
+      }
+    });
+  }
+
+  // 4.12.7 - memoria de preferencias no-personales: formulario generado a
+  // partir de la lista cerrada de claves conocidas que devuelve el backend
+  // (aiPreferencesService.KNOWN_KEYS), para no tener que duplicar la lista
+  // aqui a mano.
+  function aiPreferencesFormHtml() {
+    const known = state.aiPreferencesKnown;
+    const prefs = state.aiPreferences;
+    if (!known || !prefs) return "";
+    const fields = Object.keys(known)
+      .map((key) => {
+        const meta = known[key];
+        const value = prefs[key];
+        if (typeof meta.default === "boolean") {
+          return `<label class="ai-settings-check">
+            <input type="checkbox" name="${escHtml(key)}" ${value ? "checked" : ""} />
+            ${escHtml(meta.label)}
+          </label>`;
+        }
+        return `<label>${escHtml(meta.label)}
+          <input type="text" name="${escHtml(key)}" value="${escHtml(value || "")}" placeholder="(sin fijar)" />
+        </label>`;
+      })
+      .join("");
+    return `<form id="ai-prefs-form" class="ai-settings-form" style="margin-top:18px">
+      <h3 style="margin:0 0 4px;font-size:14px">Preferencias</h3>
+      <p class="tagline" style="margin:0 0 4px">Configuración que BMO AI tiene en cuenta al responder (nada personal).</p>
+      ${fields}
+      <button type="submit" class="dk-btn">Guardar preferencias</button>
+    </form>`;
+  }
+
+  function renderAiPanel() {
+    if (!els.aiBody) return;
+    if (state.aiView === "settings") return renderAiSettingsView();
+    if (!state.aiStatus || !state.aiStatus.configured) return renderAiNotConfiguredView();
+    return renderAiChatView();
+  }
+
+  async function submitAiChat(text) {
+    if (state.aiBusy) return;
+    state.aiLog.push({ role: "user", text });
+    state.aiBusy = true;
+    renderAiChatView();
+    try {
+      const outcome = await api("/api/ai/chat", { method: "POST", body: JSON.stringify({ message: text }) });
+      if (outcome.type === "confirmation_required") {
+        state.aiLog.push({ pending: true, pendingId: outcome.pendingId, tool: outcome.tool, params: outcome.params });
+      } else {
+        state.aiLog.push({ role: "assistant", text: outcome.text || "(sin respuesta)" });
+      }
+    } catch (err) {
+      state.aiLog.push({ role: "assistant", text: `⚠️ ${err.message || "Error hablando con la IA"}` });
+    } finally {
+      state.aiBusy = false;
+      renderAiChatView();
+    }
+  }
+
+  async function confirmAiAction(pendingId, approve) {
+    state.aiLog = state.aiLog.filter((e) => !(e.pending && e.pendingId === pendingId));
+    state.aiBusy = true;
+    renderAiChatView();
+    try {
+      const outcome = await api("/api/ai/confirm", { method: "POST", body: JSON.stringify({ pendingId, approve }) });
+      if (outcome.type === "confirmation_required") {
+        state.aiLog.push({ pending: true, pendingId: outcome.pendingId, tool: outcome.tool, params: outcome.params });
+      } else {
+        state.aiLog.push({ role: "assistant", text: outcome.text || (approve ? "Hecho." : "Cancelado.") });
+      }
+    } catch (err) {
+      state.aiLog.push({ role: "assistant", text: `⚠️ ${err.message || "Error confirmando la acción"}` });
+    } finally {
+      state.aiBusy = false;
+      renderAiChatView();
+    }
+  }
+
+  async function openAiPanel() {
+    if (!els.aiPanel || !els.aiBody) {
+      toast("BMO AI no disponible — recarga la página");
+      return;
+    }
+    closeSysHub();
+    els.aiPanel.hidden = false;
+    state.aiView = "chat";
+    els.aiBody.innerHTML = `<p class="tagline">Cargando...</p>`;
+    try {
+      state.aiStatus = await api("/api/ai/status");
+    } catch {
+      state.aiStatus = { configured: false };
+    }
+    try {
+      const prefs = await api("/api/ai/preferences");
+      state.aiPreferences = prefs.preferences;
+      state.aiPreferencesKnown = prefs.known;
+    } catch {
+      state.aiPreferences = null;
+      state.aiPreferencesKnown = null;
+    }
+    renderAiPanel();
+  }
+
+  els.aiBack?.addEventListener("click", () => {
+    closeAiPanel();
+    openSysHub();
+  });
+  els.aiSettingsBtn?.addEventListener("click", () => {
+    state.aiView = state.aiView === "settings" ? "chat" : "settings";
+    renderAiPanel();
+  });
+  els.aiPanel?.addEventListener("click", (e) => {
+    if (e.target === els.aiPanel) {
+      closeAiPanel();
+      openSysHub();
+    }
+  });
+
+  // —— 4.13.1/4.13.6/4.13.12/4.13.15 Centro de Integraciones ——
+  // Reutiliza GET /api/system/state (el mismo endpoint que ya usaba
+  // "Estado BMO" desde 4.10.2) en vez de crear un backend nuevo en
+  // paralelo - solo le anadio "prometheus" al controller, que faltaba.
+  // Cada fila conectada es un Deep Link (4.13.6) al panel real que ya
+  // existe para ese servicio, en vez de duplicar su UI aqui.
+  els.integrationsPanel = document.getElementById("integrations-panel");
+  els.integrationsBody = document.getElementById("integrations-body");
+  els.integrationsBack = document.getElementById("integrations-back");
+
+  const INTEGRATIONS_META = [
+    { key: "bmo", label: "BMO Core", icon: "⬡", open: () => openEstadoPanel().catch(() => {}) },
+    { key: "mipc", label: "MI-PC", icon: "🖥️", open: () => { setAppNav("dispositivos", { keepPanels: true }); openDevicesPanel("hub").catch(() => {}); } },
+    { key: "docker", label: "Docker", icon: "🐳", open: () => openDockerPanel().catch(() => {}) },
+    { key: "spotify", label: "Spotify", icon: "🎵", open: () => openSpotifyPanel().catch(() => {}) },
+    { key: "steam", label: "Steam", icon: "🎮", open: () => openSteamPanel().catch(() => {}) },
+    { key: "grafana", label: "Grafana", icon: "📈", open: () => openMonitorPanel().catch(() => {}) },
+    { key: "prometheus", label: "Prometheus", icon: "📊", open: () => openMonitorPanel().catch(() => {}) },
+  ];
+
+  // 4.13.4/4.13.5 - Plex/SupermarketComparator siguen bloqueados a
+  // proposito hasta tener servidor Plex o mas detalle - ver memoria de
+  // sesion. Steam (4.13.3) ya esta completo (18/08/2026), se movio a
+  // INTEGRATIONS_META arriba.
+  const INTEGRATIONS_NOT_CONNECTED = [
+    { label: "Plex", icon: "🎬", note: "Pendiente de servidor Plex" },
+    { label: "Home Assistant", icon: "🏠", note: "No configurado" },
+    { label: "SupermarketComparator", icon: "🛒", note: "Pendiente de definir integración" },
+  ];
+
+  function integrationsDot(status) {
+    if (["online", "healthy", "connected"].includes(status)) return "🟢";
+    if (status === "warning") return "🟡";
+    if (["offline", "disconnected", "critical"].includes(status)) return "🔴";
+    return "⚪";
+  }
+
+  function closeIntegrationsPanel() {
+    if (els.integrationsPanel) els.integrationsPanel.hidden = true;
+  }
+
+  async function openIntegrationsPanel() {
+    if (!els.integrationsPanel || !els.integrationsBody) {
+      toast("Integraciones no disponible");
+      return;
+    }
+    closeSysHub();
+    els.integrationsPanel.hidden = false;
+    els.integrationsBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+
+    let sysState = {};
+    try {
+      sysState = await api("/api/system/state");
+    } catch {
+      sysState = {};
+    }
+
+    const connectedHtml = INTEGRATIONS_META.map((m) => {
+      const s = sysState[m.key] || {};
+      const dot = integrationsDot(s.status);
+      const detail =
+        m.key === "docker" ? `${s.running || 0}/${s.total || 0} activos` : s.status || "desconocido";
+      return `<button type="button" class="integration-row" data-integration="${m.key}">
+        <span class="integration-ico">${m.icon}</span>
+        <span class="integration-info">
+          <span class="integration-name">${escHtml(m.label)}</span>
+          <span class="integration-detail">${dot} ${escHtml(String(detail))}</span>
+        </span>
+        <span class="chev">›</span>
+      </button>`;
+    }).join("");
+
+    const notConnectedHtml = INTEGRATIONS_NOT_CONNECTED.map(
+      (n) => `<div class="integration-row integration-row--stub">
+        <span class="integration-ico">${n.icon}</span>
+        <span class="integration-info">
+          <span class="integration-name">${escHtml(n.label)}</span>
+          <span class="integration-detail">⚪ ${escHtml(n.note)}</span>
+        </span>
+      </div>`
+    ).join("");
+
+    els.integrationsBody.innerHTML = `
+      <h3 style="margin:0 0 4px;font-size:14px">Conectadas</h3>
+      <div class="integrations-list">${connectedHtml}</div>
+      <h3 style="margin:14px 0 4px;font-size:14px">No conectadas</h3>
+      <div class="integrations-list">${notConnectedHtml}</div>
+    `;
+
+    els.integrationsBody.querySelectorAll("[data-integration]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const meta = INTEGRATIONS_META.find((m) => m.key === btn.dataset.integration);
+        if (meta && typeof meta.open === "function") {
+          closeIntegrationsPanel();
+          meta.open();
+        }
+      });
+    });
+  }
+
+  els.integrationsBack?.addEventListener("click", () => {
+    closeIntegrationsPanel();
+    openSysHub();
+  });
+  els.integrationsPanel?.addEventListener("click", (e) => {
+    if (e.target === els.integrationsPanel) {
+      closeIntegrationsPanel();
+      openSysHub();
+    }
+  });
+
+  // —— 4.13.13 Centro de cuentas ——
+  // Distinto de Integraciones: aqui solo van servicios con login/credencial
+  // propios (no Docker/Grafana, que no tienen "cuenta"). Spotify reutiliza
+  // su panel real (que ya tenia conectar/desconectar via OAuth desde antes
+  // de esta sesion) - no se duplica ese flujo aqui.
+  els.accountsPanel = document.getElementById("accounts-panel");
+  els.accountsBody = document.getElementById("accounts-body");
+  els.accountsBack = document.getElementById("accounts-back");
+
+  const ACCOUNTS_META = [
+    { key: "spotify", label: "Spotify", icon: "🎵", open: () => openSpotifyPanel().catch(() => {}) },
+    { key: "steam", label: "Steam", icon: "🎮", open: () => openSteamPanel().catch(() => {}) },
+  ];
+  const ACCOUNTS_NOT_CONNECTED = [
+    { label: "Plex", icon: "🎬", note: "Pendiente de servidor Plex" },
+  ];
+
+  function closeAccountsPanel() {
+    if (els.accountsPanel) els.accountsPanel.hidden = true;
+  }
+
+  async function openAccountsPanel() {
+    if (!els.accountsPanel || !els.accountsBody) {
+      toast("Cuentas no disponible");
+      return;
+    }
+    closeSysHub();
+    els.accountsPanel.hidden = false;
+    els.accountsBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+
+    let sysState = {};
+    try {
+      sysState = await api("/api/system/state");
+    } catch {
+      sysState = {};
+    }
+
+    const connectedHtml = ACCOUNTS_META.map((m) => {
+      const s = sysState[m.key] || {};
+      const dot = integrationsDot(s.status);
+      const label = s.status === "connected" ? "Conectado" : s.status === "disconnected" ? "No conectado" : "Desconocido";
+      return `<button type="button" class="integration-row" data-account="${m.key}">
+        <span class="integration-ico">${m.icon}</span>
+        <span class="integration-info">
+          <span class="integration-name">${escHtml(m.label)}</span>
+          <span class="integration-detail">${dot} ${escHtml(label)}</span>
+        </span>
+        <span class="chev">›</span>
+      </button>`;
+    }).join("");
+
+    const notConnectedHtml = ACCOUNTS_NOT_CONNECTED.map(
+      (n) => `<div class="integration-row integration-row--stub">
+        <span class="integration-ico">${n.icon}</span>
+        <span class="integration-info">
+          <span class="integration-name">${escHtml(n.label)}</span>
+          <span class="integration-detail">⚪ ${escHtml(n.note)}</span>
+        </span>
+      </div>`
+    ).join("");
+
+    els.accountsBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">Los secretos de cada cuenta se guardan cifrados (Secret Store) — nunca en el frontend.</p>
+      <div class="integrations-list">${connectedHtml}</div>
+      <h3 style="margin:14px 0 4px;font-size:14px">No conectadas</h3>
+      <div class="integrations-list">${notConnectedHtml}</div>
+    `;
+
+    els.accountsBody.querySelectorAll("[data-account]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const meta = ACCOUNTS_META.find((m) => m.key === btn.dataset.account);
+        if (meta && typeof meta.open === "function") {
+          closeAccountsPanel();
+          meta.open();
+        }
+      });
+    });
+  }
+
+  els.accountsBack?.addEventListener("click", () => {
+    closeAccountsPanel();
+    openSysHub();
+  });
+  els.accountsPanel?.addEventListener("click", (e) => {
+    if (e.target === els.accountsPanel) {
+      closeAccountsPanel();
+      openSysHub();
+    }
+  });
+
+  // —— 4.13.3 Steam ——
+  // Solo API key + SteamID64 (no OAuth como Spotify) - ambos ya guardados
+  // (key cifrada en el Secret Store, steamId en config.json). El backend
+  // (api/services/steamService.js) llama a la Web API de Steam real.
+  els.steamPanel = document.getElementById("steam-panel");
+  els.steamBody = document.getElementById("steam-body");
+  els.steamBack = document.getElementById("steam-back");
+
+  function closeSteamPanel() {
+    if (els.steamPanel) els.steamPanel.hidden = true;
+  }
+
+  const STEAM_STATUS_LABEL = {
+    online: "🟢 Conectado",
+    busy: "🟡 Ocupado",
+    away: "🟡 Ausente",
+    snooze: "⚪ Inactivo",
+    looking_to_trade: "🟢 Buscando intercambio",
+    looking_to_play: "🟢 Buscando partida",
+    offline: "⚪ Desconectado",
+    unknown: "⚪ Desconocido",
+  };
+
+  async function openSteamPanel() {
+    if (!els.steamPanel || !els.steamBody) {
+      toast("Steam no disponible");
+      return;
+    }
+    closeSysHub();
+    els.steamPanel.hidden = false;
+    els.steamBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+
+    const [profile, gamesData] = await Promise.all([
+      api("/api/steam/status").catch(() => ({ configured: false })),
+      api("/api/steam/games").catch(() => ({ configured: false, games: [] })),
+    ]);
+
+    if (!profile.configured) {
+      els.steamBody.innerHTML = `<p class="tagline">Steam no está configurado todavía.</p>`;
+      return;
+    }
+
+    const statusLine = profile.playing
+      ? `🎮 Jugando ahora: ${escHtml(profile.gameName || "")}`
+      : STEAM_STATUS_LABEL[profile.status] || STEAM_STATUS_LABEL.unknown;
+
+    const games = (gamesData.games || []).slice(0, 30);
+    const gamesHtml = games.map((g) => `
+      <div class="integration-row integration-row--stub">
+        ${g.iconUrl ? `<img src="${g.iconUrl}" alt="" class="integration-ico" style="border-radius:6px;width:32px;height:32px;object-fit:cover" />` : `<span class="integration-ico">🎮</span>`}
+        <span class="integration-info">
+          <span class="integration-name">${escHtml(g.name)}</span>
+          <span class="integration-detail">${g.playtimeHours}h jugadas${g.playtime2WeeksMinutes ? ` · ${Math.round(g.playtime2WeeksMinutes / 6) / 10}h últimas 2 semanas` : ""}</span>
+        </span>
+      </div>`).join("") || `<p class="tagline">Sin juegos visibles</p>`;
+
+    els.steamBody.innerHTML = `
+      <div class="integration-row integration-row--stub" style="margin-bottom:12px">
+        <img src="${profile.avatar}" alt="" class="integration-ico" style="border-radius:50%;width:40px;height:40px;object-fit:cover" />
+        <span class="integration-info">
+          <span class="integration-name">${escHtml(profile.name)}</span>
+          <span class="integration-detail">${statusLine}</span>
+        </span>
+      </div>
+      <h3 style="margin:0 0 4px;font-size:14px">Biblioteca (${gamesData.count || 0} juegos, top 30 por tiempo jugado)</h3>
+      <div class="integrations-list">${gamesHtml}</div>
+    `;
+  }
+
+  els.steamBack?.addEventListener("click", () => {
+    closeSteamPanel();
+    openSysHub();
+  });
+  els.steamPanel?.addEventListener("click", (e) => {
+    if (e.target === els.steamPanel) {
+      closeSteamPanel();
+      openSysHub();
+    }
+  });
+
+  // —— 4.14.6/4.14.17 Recovery Center ——
+  // Vista unica que junta lo que 4.14.1-4.14.14 ya construyo en el backend
+  // (watchdog continuo, guardian de disco/temperatura, retencion, crash
+  // reports, recuperacion automatica reciente) en vez de repartirlo en
+  // paneles sueltos - esta ES la "pantalla final de estado" del spec
+  // (4.14.17), no una pantalla aparte.
+  els.recoveryPanel = document.getElementById("recovery-panel");
+  els.recoveryBody = document.getElementById("recovery-body");
+  els.recoveryBack = document.getElementById("recovery-back");
+
+  function watchdogDot(status) {
+    if (status === "ok") return "🟢";
+    if (status === "blocked") return "🟡";
+    if (status === "down") return "🔴";
+    return "⚪";
+  }
+
+  function closeRecoveryPanel() {
+    if (els.recoveryPanel) els.recoveryPanel.hidden = true;
+  }
+
+  async function openRecoveryPanel() {
+    if (!els.recoveryPanel || !els.recoveryBody) {
+      toast("Recovery Center no disponible");
+      return;
+    }
+    closeSysHub();
+    els.recoveryPanel.hidden = false;
+    els.recoveryBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+
+    const [watchdog, crash, retention, guard, events] = await Promise.all([
+      api("/api/system/watchdog").catch(() => ({ items: [] })),
+      api("/api/system/crash-reports").catch(() => ({ reports: [] })),
+      api("/api/system/retention").catch(() => ({ policy: {}, lastRun: null })),
+      api("/api/system/thermal-guard").catch(() => ({})),
+      api("/api/events?limit=40").catch(() => ({ recent: [] })),
+    ]);
+
+    const items = watchdog.items || [];
+    const overallOk = items.length > 0 && items.every((i) => i.status === "ok");
+
+    const watchdogHtml = items.map((i) => `
+      <div class="integration-row integration-row--stub">
+        <span class="integration-ico">${watchdogDot(i.status)}</span>
+        <span class="integration-info">
+          <span class="integration-name">${escHtml(i.label)}</span>
+          <span class="integration-detail">${escHtml(i.detail || (i.status === "ok" ? "OK" : i.status))} · ${i.uptimePercent}% uptime</span>
+        </span>
+      </div>`).join("") || `<p class="tagline">Sin datos todavía</p>`;
+
+    const RECOVERY_EVENT_TYPES = new Set([
+      "auto_recovery.success", "auto_recovery.failed", "auto_recovery.escalated",
+      "watchdog.subsystem_down", "watchdog.subsystem_recovered",
+      "thermal_guard.ai_paused", "thermal_guard.ai_resumed",
+      "retention.completed",
+    ]);
+    const recoveryEvents = (events.recent || []).filter((e) => RECOVERY_EVENT_TYPES.has(e.type)).slice(0, 8);
+    const eventsHtml = recoveryEvents.map((e) => `
+      <div class="integration-row integration-row--stub">
+        <span class="integration-ico">${e.level === "critical" ? "🔴" : e.level === "warning" ? "🟡" : "🟢"}</span>
+        <span class="integration-info">
+          <span class="integration-name">${escHtml(e.title || e.type)}</span>
+          <span class="integration-detail">${escHtml(e.message || "")} · ${formatBackupWhen(e.time)}</span>
+        </span>
+      </div>`).join("") || `<p class="tagline">Sin actividad reciente</p>`;
+
+    const crashHtml = (crash.reports || []).slice(0, 5).map((r) => `
+      <div class="integration-row integration-row--stub">
+        <span class="integration-ico">💥</span>
+        <span class="integration-info">
+          <span class="integration-name">${escHtml(r.kind)}</span>
+          <span class="integration-detail">${escHtml(r.message)} · ${formatBackupWhen(r.time)}</span>
+        </span>
+      </div>`).join("") || `<p class="tagline">Sin fallos registrados</p>`;
+
+    const guardBits = [];
+    if (guard.diskGuardActive) guardBits.push("🧹 Limpieza forzada por disco crítico");
+    if (guard.tempGuardActive) guardBits.push("🌡️ Temperatura crítica");
+    if (guard.aiPausedByThermal) guardBits.push("🤖 IA pausada por temperatura");
+    const guardHtml = guardBits.length
+      ? guardBits.map((b) => `<p class="tagline">${b}</p>`).join("")
+      : `<p class="tagline">Todo normal</p>`;
+
+    const lastRun = retention.lastRun;
+    const retentionInfo = lastRun
+      ? `Última limpieza: ${formatBackupWhen(lastRun.at)} · ${lastRun.backupsRemoved.length} backups eliminados · ${lastRun.logsRotated.length} logs rotados`
+      : "Todavía no se ha ejecutado";
+
+    els.recoveryBody.innerHTML = `
+      <h3 style="margin:0 0 4px;font-size:14px">${overallOk ? "🟢 Todo en orden" : "🟡 Revisar subsistemas"}</h3>
+
+      <h3 style="margin:14px 0 4px;font-size:14px">Vigilancia continua</h3>
+      <div class="integrations-list">${watchdogHtml}</div>
+
+      <h3 style="margin:14px 0 4px;font-size:14px">Guardián de disco/temperatura</h3>
+      ${guardHtml}
+
+      <h3 style="margin:14px 0 4px;font-size:14px">Recuperación automática reciente</h3>
+      <div class="integrations-list">${eventsHtml}</div>
+
+      <h3 style="margin:14px 0 4px;font-size:14px">Almacenamiento</h3>
+      <p class="tagline">${escHtml(retentionInfo)}</p>
+      <button type="button" id="recovery-run-retention" class="plugins-refresh">Limpiar ahora</button>
+
+      <h3 style="margin:14px 0 4px;font-size:14px">Informes de fallo</h3>
+      <div class="integrations-list">${crashHtml}</div>
+    `;
+
+    document.getElementById("recovery-run-retention")?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.textContent = "Limpiando…";
+      try {
+        await api("/api/system/retention/run", { method: "POST", body: "{}" });
+        toast("Limpieza completada");
+        openRecoveryPanel();
+      } catch (err) {
+        toast(err.message || "Error");
+        btn.disabled = false;
+        btn.textContent = "Limpiar ahora";
+      }
+    });
+  }
+
+  els.recoveryBack?.addEventListener("click", () => {
+    closeRecoveryPanel();
+    openSysHub();
+  });
+  els.recoveryPanel?.addEventListener("click", (e) => {
+    if (e.target === els.recoveryPanel) {
+      closeRecoveryPanel();
+      openSysHub();
+    }
+  });
+
+  // 4.17.20 - Security Center: semaforo real por area (sin puntuacion
+  // artificial, pedido explicitamente asi) - agrega lo que ya construyo
+  // el resto de 4.17 en vez de duplicar logica.
+  els.securityCenterPanel = document.getElementById("security-center-panel");
+  els.securityCenterBody = document.getElementById("security-center-body");
+  els.securityCenterBack = document.getElementById("security-center-back");
+
+  function secDot(status) {
+    if (status === "green") return "🟢";
+    if (status === "yellow") return "🟡";
+    if (status === "red") return "🔴";
+    return "⚪";
+  }
+
+  function closeSecurityCenterPanel() {
+    if (els.securityCenterPanel) els.securityCenterPanel.hidden = true;
+  }
+
+  async function openSecurityCenterPanel() {
+    if (!els.securityCenterPanel || !els.securityCenterBody) {
+      toast("Security Center no disponible");
+      return;
+    }
+    closeSysHub();
+    els.securityCenterPanel.hidden = false;
+    els.securityCenterBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+
+    const overview = await api("/api/system/security-center").catch(() => ({ areas: [] }));
+    const areas = overview.areas || [];
+
+    const areasHtml = areas.map((a) => `
+      <div class="integration-row integration-row--stub">
+        <span class="integration-ico">${secDot(a.status)}</span>
+        <span class="integration-info">
+          <span class="integration-name">${escHtml(a.label)}</span>
+          <span class="integration-detail">${escHtml(a.detail || "")}</span>
+        </span>
+      </div>`).join("") || `<p class="tagline">Sin datos todavía</p>`;
+
+    els.securityCenterBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">Estado real por área — sin puntuación artificial.</p>
+      <div class="integrations-list">${areasHtml}</div>
+    `;
+  }
+
+  els.securityCenterBack?.addEventListener("click", () => {
+    closeSecurityCenterPanel();
+    openSysHub();
+  });
+  els.securityCenterPanel?.addEventListener("click", (e) => {
+    if (e.target === els.securityCenterPanel) {
+      closeSecurityCenterPanel();
+      openSysHub();
+    }
+  });
+
+  // —— 4.13.10/4.13.11 API pública / BMO Bridge ——
+  // "BMO Bridge" del spec (aplicacion externa -> Bridge -> BMO Core) es en
+  // la practica esta misma API publica con Bearer tokens: no se construyo
+  // un concepto separado porque seria la misma pieza dos veces.
+  els.publicapiPanel = document.getElementById("publicapi-panel");
+  els.publicapiBody = document.getElementById("publicapi-body");
+  els.publicapiBack = document.getElementById("publicapi-back");
+
+  function closePublicApiPanel() {
+    if (els.publicapiPanel) els.publicapiPanel.hidden = true;
+  }
+
+  async function renderPublicApiBody(justCreatedKey) {
+    let data = { keys: [], scopes: {} };
+    try {
+      data = await api("/api/public-keys");
+    } catch {
+      /* se muestra vacio si falla */
+    }
+
+    const revealHtml = justCreatedKey
+      ? `<div class="ai-ollama-note" style="color:#2ee59d;border-color:rgba(46,229,157,0.3);background:rgba(46,229,157,0.1)">
+          <strong>Clave creada — cópiala ahora, no se volverá a mostrar:</strong><br>
+          <code style="user-select:all;word-break:break-all">${escHtml(justCreatedKey)}</code>
+        </div>`
+      : "";
+
+    const keysHtml = (data.keys || []).length
+      ? data.keys
+          .map(
+            (k) => `<div class="integration-row integration-row--stub" style="align-items:flex-start">
+        <span class="integration-ico">🔑</span>
+        <span class="integration-info">
+          <span class="integration-name">${escHtml(k.name)} ${
+              k.revoked
+                ? '<span class="docker-badge community">Revocada</span>'
+                : '<span class="docker-badge official">Activa</span>'
+            }</span>
+          <span class="integration-detail">Scopes: ${escHtml((k.scopes || []).join(", "))} · ${k.rateLimitPerMin}/min${
+              k.lastUsedAt ? " · último uso " + new Date(k.lastUsedAt).toLocaleString("es-ES") : " · sin usar"
+            }</span>
+        </span>
+        ${!k.revoked ? `<button type="button" class="dk-btn ghost" data-revoke="${k.id}">Revocar</button>` : ""}
+      </div>`
+          )
+          .join("")
+      : `<p class="tagline">Sin claves todavía.</p>`;
+
+    const scopeChecks = Object.keys(data.scopes || {})
+      .map(
+        (s) =>
+          `<label class="ai-settings-check"><input type="checkbox" name="scope" value="${s}" checked /> ${escHtml(data.scopes[s])}</label>`
+      )
+      .join("");
+
+    els.publicapiBody.innerHTML = `
+      ${revealHtml}
+      <p class="tagline" style="margin:0 0 8px">Para que tus propios proyectos (p.ej. SupermarketComparator) hablen con BMO sin acceso a Docker/sistema. Cada clave se autentica con "Authorization: Bearer &lt;clave&gt;".</p>
+      <h3 style="margin:0 0 4px;font-size:14px">Claves</h3>
+      <div class="integrations-list">${keysHtml}</div>
+      <h3 style="margin:14px 0 4px;font-size:14px">Nueva clave</h3>
+      <form id="publicapi-create-form" class="ai-settings-form">
+        <label>Nombre <input type="text" name="name" placeholder="p.ej. SupermarketComparator" required /></label>
+        ${scopeChecks}
+        <label>Límite de peticiones/min <input type="number" name="rateLimitPerMin" value="30" min="1" max="600" /></label>
+        <button type="submit" class="dk-btn">Crear clave</button>
+      </form>
+    `;
+
+    els.publicapiBody.querySelectorAll("[data-revoke]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/public-keys/${btn.dataset.revoke}/revoke`, { method: "POST", body: "{}" });
+          toast("Clave revocada");
+          renderPublicApiBody();
+        } catch (err) {
+          toast(err.message || "Error al revocar");
+        }
+      });
+    });
+
+    document.getElementById("publicapi-create-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const scopes = fd.getAll("scope");
+      try {
+        const created = await api("/api/public-keys", {
+          method: "POST",
+          body: JSON.stringify({
+            name: fd.get("name"),
+            scopes,
+            rateLimitPerMin: Number(fd.get("rateLimitPerMin")) || 30,
+          }),
+        });
+        toast(`Clave "${created.name}" creada`);
+        renderPublicApiBody(created.key);
+      } catch (err) {
+        toast(err.message || "Error al crear la clave");
+      }
+    });
+  }
+
+  async function openPublicApiPanel() {
+    if (!els.publicapiPanel || !els.publicapiBody) {
+      toast("API pública no disponible");
+      return;
+    }
+    closeSysHub();
+    els.publicapiPanel.hidden = false;
+    els.publicapiBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    await renderPublicApiBody();
+  }
+
+  els.publicapiBack?.addEventListener("click", () => {
+    closePublicApiPanel();
+    openSysHub();
+  });
+  els.publicapiPanel?.addEventListener("click", (e) => {
+    if (e.target === els.publicapiPanel) {
+      closePublicApiPanel();
+      openSysHub();
+    }
+  });
 
   function closeSysPermsPanel() {
     if (els.sysPermsPanel) els.sysPermsPanel.hidden = true;
@@ -7762,16 +10375,18 @@
     els.automationsPanel.hidden = false;
     els.automationsBody.innerHTML = `<p class="tagline">Cargando…</p>`;
     try {
-      const [autoData, sceneData, devicesData, dockerData, permsData] = await Promise.all([
+      const [autoData, sceneData, devicesData, dockerData, permsData, favData] = await Promise.all([
         api("/api/automations"),
         api("/api/scenes"),
         api("/api/devices"),
         api("/api/docker").catch(() => null),
         api("/api/permissions").catch(() => null),
+        api("/api/ui/favorites").catch(() => null),
       ]);
       state.automations = autoData.automations || [];
       state.automationScenes = sceneData.scenes || [];
       state.automationDevices = devicesData.devices || [];
+      if (favData) state.automationFavorites = favData.automations || [];
       if (dockerData) state.docker = dockerData;
       if (permsData) state.globalPermissions = permsData;
       renderAutomationsBody();
@@ -7863,12 +10478,14 @@
       ? list
           .map((a) => {
             const scene = scenesById[a.sceneId];
+            const isFavAuto = (state.automationFavorites || []).includes(a.id);
             return `<div class="plugin-card">
-        <div class="plugin-card-top">
-          <button type="button" class="dk-btn ghost" style="text-align:left;padding:0;border:none;background:none;display:block;width:100%" data-auto-open="${escHtml(a.id)}">
+        <div class="plugin-card-top" style="display:flex;align-items:flex-start;gap:6px">
+          <button type="button" class="dk-btn ghost" style="text-align:left;padding:0;border:none;background:none;display:block;width:100%;flex:1" data-auto-open="${escHtml(a.id)}">
             <h3>${a.enabled ? "🟢" : "⚪"} ${escHtml(a.name)}</h3>
             <p>Cuando ${automationSummary(a)} → escena "${escHtml(scene ? scene.name : "?")}"</p>
           </button>
+          <button type="button" class="dk-btn ghost" style="padding:6px 10px;flex-shrink:0" data-auto-fav="${escHtml(a.id)}" aria-label="Favorito">${isFavAuto ? "⭐" : "☆"}</button>
         </div>
         <div class="docker-actions">
           <button type="button" class="dk-btn ghost" data-auto-toggle="${escHtml(a.id)}">${a.enabled ? "Desactivar" : "Activar"}</button>
@@ -8297,6 +10914,22 @@
     });
     els.automationsBody.querySelector("#au-view-history")?.addEventListener("click", () => {
       openAutomationsHistoryView(state.automationEditingId).catch((err) => toast(err.message || "Error"));
+    });
+    els.automationsBody.querySelectorAll("[data-auto-fav]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-auto-fav");
+        const set = new Set(state.automationFavorites || []);
+        if (set.has(id)) set.delete(id);
+        else set.add(id);
+        const ids = [...set];
+        state.automationFavorites = ids;
+        renderAutomationsBody();
+        try {
+          await api("/api/ui/favorites/automations", { method: "PUT", body: JSON.stringify({ ids }) });
+        } catch (err) {
+          toast(err.message || "Error guardando favorito");
+        }
+      });
     });
     els.automationsBody.querySelectorAll("[data-auto-toggle]").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -8976,11 +11609,60 @@
     }
   }
 
+  // 4.13.2 - categorias del Marketplace: el campo "category" ya existia en
+  // cada plugin.json (usado hasta ahora solo como dato suelto, sin filtro
+  // ni agrupacion en la UI). Mapeo de las categorias que pide el spec del
+  // usuario + fallback al id crudo para las que ya traian los plugins reales
+  // (demo/system/monitoring/media).
+  const PLUGIN_CATEGORY_LABELS = {
+    system: "Sistema",
+    media: "Multimedia",
+    gaming: "Gaming",
+    home: "Casa",
+    dev: "Desarrollo",
+    productivity: "Productividad",
+    automation: "Automatización",
+    monitoring: "Monitorización",
+    demo: "Demo",
+  };
+  state.pluginSearch = state.pluginSearch || "";
+  state.pluginCategory = state.pluginCategory || "all";
+
   function renderPluginsBody() {
     if (!els.pluginsBody) return;
-    const list = state.plugins || [];
-    if (!list.length) {
+    const all = state.plugins || [];
+    if (!all.length) {
       els.pluginsBody.innerHTML = `<p class="tagline">No hay plugins en el repositorio.</p>`;
+      if (els.pluginsCategoryChips) els.pluginsCategoryChips.innerHTML = "";
+      return;
+    }
+
+    const categories = [...new Set(all.map((p) => p.category).filter(Boolean))].sort();
+    if (els.pluginsCategoryChips) {
+      els.pluginsCategoryChips.innerHTML = ["all", ...categories]
+        .map((c) => {
+          const label = c === "all" ? "Todas" : PLUGIN_CATEGORY_LABELS[c] || c;
+          const active = state.pluginCategory === c ? " active" : "";
+          return `<button type="button" class="plugin-cat-chip${active}" data-cat="${escHtml(c)}">${escHtml(label)}</button>`;
+        })
+        .join("");
+      els.pluginsCategoryChips.querySelectorAll("[data-cat]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.pluginCategory = btn.dataset.cat;
+          renderPluginsBody();
+        });
+      });
+    }
+
+    const q = state.pluginSearch.trim().toLowerCase();
+    const list = all.filter((p) => {
+      if (state.pluginCategory !== "all" && p.category !== state.pluginCategory) return false;
+      if (q && !`${p.name} ${p.description || ""}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+
+    if (!list.length) {
+      els.pluginsBody.innerHTML = `<p class="tagline">Sin resultados para este filtro.</p>`;
       return;
     }
 
@@ -9011,17 +11693,17 @@
           );
         }
 
+        const incompatibleAttrs =
+          p.compatible === false
+            ? ` disabled title="${String(p.compatibilityMessage || "Incompatible con esta versión de BMO").replace(/"/g, "&quot;")}"`
+            : "";
         const actions = [];
         if (!installed) {
-          actions.push(`<button type="button" class="primary" data-act="install" data-id="${p.id}">Instalar</button>`);
+          actions.push(`<button type="button" class="primary" data-act="install" data-id="${p.id}"${incompatibleAttrs}>Instalar</button>`);
         } else {
           if (canUpdate) {
-            const disabled =
-              p.compatible === false
-                ? ` disabled title="${String(p.compatibilityMessage || "Incompatible con esta versión de BMO").replace(/"/g, "&quot;")}"`
-                : "";
             actions.push(
-              `<button type="button" class="primary" data-act="update" data-id="${p.id}"${disabled}>Actualizar</button>`
+              `<button type="button" class="primary" data-act="update" data-id="${p.id}"${incompatibleAttrs}>Actualizar</button>`
             );
           }
           if (enabled) {
@@ -9069,11 +11751,21 @@
           ? `<div class="plugin-card-meta">v${version}<br><span class="plugin-latest">→ ${latest}</span></div>`
           : `<div class="plugin-card-meta">v${version}</div>`;
 
+        // 4.13.18 - distincion oficial vs comunidad: mismo patron visual que
+        // ya se usaba para imagenes Docker oficiales (docker-badge official).
+        const officialBadge = p.official
+          ? `<span class="docker-badge official">Oficial</span>`
+          : `<span class="docker-badge community">Comunidad</span>`;
+        const externalWarning = p.official
+          ? ""
+          : `<p class="plugin-external-warning">⚠️ Plugin externo — no está desarrollado por BMO. Revisa sus permisos antes de instalar.</p>`;
+
         return `<article class="plugin-card${canUpdate ? " plugin-card--update" : ""}" data-plugin="${p.id}">
           <div class="plugin-card-top">
             <div>
-              <h3>${escHtml(p.name)}</h3>
+              <h3>${escHtml(p.name)} ${officialBadge}</h3>
               <p>${escHtml(p.description || "")}</p>
+              ${externalWarning}
             </div>
             ${meta}
           </div>
@@ -9194,6 +11886,8 @@
     else if (kind === "health") openHealthPanel().catch((err) => toast(err.message || "Error"));
     else if (kind === "maintenance") openMaintenancePanel().catch((err) => toast(err.message || "Error"));
     else if (kind === "settings") openSettingsPanel().catch((err) => toast(err.message || "Error"));
+    else if (kind === "personalizacion") openPersonalizacionPanel();
+    else if (kind === "quickmenu") openQuickMenuPanel().catch((err) => toast(err.message || "Error"));
     else if (kind === "perf") openPerfPanel().catch((err) => toast(err.message || "Error"));
     else if (kind === "monitor") openMonitorPanel().catch((err) => toast(err.message || "Error"));
     else if (kind === "plugins") openPluginsPanel().catch((err) => toast(err.message || "Error"));
@@ -9221,6 +11915,20 @@
       openScenesPanel().catch((err) => toast(err.message || "Error"));
     } else if (kind === "automatizaciones") {
       openAutomationsPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "ai") {
+      openAiPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "gesturememe") {
+      openGesturememePanel();
+    } else if (kind === "integrations") {
+      openIntegrationsPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "accounts") {
+      openAccountsPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "publicapi") {
+      openPublicApiPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "recovery") {
+      openRecoveryPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "securitycenter") {
+      openSecurityCenterPanel().catch((err) => toast(err.message || "Error"));
     }
   });
 
@@ -9353,6 +12061,10 @@
   document.getElementById("home-open-services")?.addEventListener("click", () => {
     setAppNav("servicios");
   });
+  document.getElementById("home-open-scenes")?.addEventListener("click", () => {
+    setAppNav("sistema", { keepPanels: true });
+    openScenesPanel().catch((err) => toast(err.message || "Error"));
+  });
   els.devicesRefresh?.addEventListener("click", () => {
     refreshDevicesPanel().catch((err) => toast(err.message));
   });
@@ -9414,6 +12126,42 @@
       openSysHub();
     }
   });
+  els.personalizacionPanel?.addEventListener("click", (e) => {
+    if (e.target === els.personalizacionPanel) {
+      closePersonalizacionPanel();
+      openSysHub();
+    }
+  });
+  els.navegacionPanel?.addEventListener("click", (e) => {
+    if (e.target === els.navegacionPanel) {
+      closeNavegacionPanel();
+      openPersonalizacionPanel();
+    }
+  });
+  els.customPagePanel?.addEventListener("click", (e) => {
+    if (e.target === els.customPagePanel) {
+      closeCustomPagePanel();
+      openNavegacionPanel().catch(() => {});
+    }
+  });
+  els.quickMenuPanel?.addEventListener("click", (e) => {
+    if (e.target === els.quickMenuPanel) {
+      closeQuickMenuPanel();
+      openSysHub();
+    }
+  });
+  els.aparienciaPanel?.addEventListener("click", (e) => {
+    if (e.target === els.aparienciaPanel) {
+      closeAparienciaPanel();
+      openPersonalizacionPanel();
+    }
+  });
+  els.pantallasPanel?.addEventListener("click", (e) => {
+    if (e.target === els.pantallasPanel) {
+      closePantallasPanel();
+      openPersonalizacionPanel();
+    }
+  });
   els.eventsPanel?.addEventListener("click", (e) => {
     if (e.target === els.eventsPanel) {
       closeEventsPanel();
@@ -9457,11 +12205,12 @@
   });
 
   els.pluginsBack?.addEventListener("click", closePluginsPanel);
-  els.pluginsRefresh?.addEventListener("click", () => {
-    refreshPlugins().catch((err) => toast(err.message));
-  });
   els.pluginsPanel?.addEventListener("click", (e) => {
     if (e.target === els.pluginsPanel) closePluginsPanel();
+  });
+  els.pluginsSearch?.addEventListener("input", () => {
+    state.pluginSearch = els.pluginsSearch.value || "";
+    renderPluginsBody();
   });
   function returnFromPermsPanel() {
     closePermsPanel();
@@ -9497,17 +12246,26 @@
     if (e.target === els.logsPanel) returnFromLogsPanel();
   });
 
-  document.querySelectorAll(".nav-item").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      if (btn.disabled) return;
-      setAppNav(btn.dataset.nav);
-    });
-  });
+  // 4.11.7 - El dock ahora se renderiza dinamicamente (ver renderDock()),
+  // que ya se encarga de enlazar los clicks de sus propios botones - no
+  // hace falta un binding estatico aqui.
+  renderDock();
+  loadDockConfig();
+  initGlobalGestures();
   // Vista inicial
   setAppNav("inicio", { keepPanels: true });
   api("/api/applications")
     .then((data) => {
       state.appCatalog = data.apps || [];
+    })
+    .catch(() => {});
+  // 4.11.10 - cache de escenas para los tiles de Inicio/Menu rapido; se
+  // recarga tambien cada vez que se abre el Menu rapido (por si el usuario
+  // creo/borro una escena entretanto), esto es solo la carga inicial.
+  api("/api/scenes")
+    .then((data) => {
+      state.scenes = data.scenes || [];
+      renderHome();
     })
     .catch(() => {});
 
@@ -9527,10 +12285,14 @@
       if (metricsSnap) state.metricsSnap = metricsSnap;
       // No bloquear el dashboard si Spotify falla
       await refreshSpotifyStatus().catch(() => {});
-      renderServices();
+      // No re-renderizar la grid de Servicios mientras el usuario esta
+      // reordenando: reconstruiria el DOM desde el array `services` y
+      // perderia el arrastre en curso (4.11.2).
+      if (!state.reorderingServices) renderServices();
       renderHome();
+      // refreshEvents() ya actualiza el badge de notificaciones con el mismo
+      // fetch (ver 4.10.18) - no hace falta un refreshNotificationBadge() aparte aqui.
       refreshEvents().catch(() => {});
-      refreshNotificationBadge();
     } catch (err) {
       console.error(err);
       toast("Error hablando con la API BMO");
@@ -9539,17 +12301,89 @@
 
   renderClock();
   setInterval(renderClock, 1000);
-  refresh();
-  setInterval(refresh, 10000);
+  // Aplica el orden guardado de Servicios ANTES del primer render, para que
+  // no haya un parpadeo con el orden por defecto seguido de un reordenado.
+  api("/api/ui/services-order")
+    .then((data) => applyServiceOrder(data.order))
+    .catch(() => {})
+    .finally(() => {
+      api("/api/ui/favorites")
+        .then((data) => {
+          state.serviceFavorites = data.services || [];
+          sortFavoritesFirst();
+        })
+        .catch(() => {})
+        .finally(() => {
+          refresh();
+          setInterval(refresh, 10000);
+        });
+    });
   api("/api/system/settings")
     .then((data) => {
       state.settingsData = data;
       applyBrandName(data.general?.name);
+      applyTheme(data.general?.theme);
+      applyAccent(data.general?.accentColor, data.general?.accentCustomHex);
+      // 4.16.19 - Pagina de inicio configurable: solo se aplica a las 4
+      // paginas fijas (inicio/servicios/sistema/dispositivos), nunca a una
+      // pagina personalizada - arrancar directo en una pagina custom
+      // dependeria de que sus datos (uiPages) ya estuvieran cargados en
+      // este punto del arranque, un riesgo real de pantalla rota que no
+      // compensa para este caso de uso.
+      const FIXED_START_PAGES = new Set(["inicio", "servicios", "sistema", "dispositivos"]);
+      if (data.general?.startPage && FIXED_START_PAGES.has(data.general.startPage) && data.general.startPage !== "inicio") {
+        setAppNav(data.general.startPage);
+      }
+    })
+    .catch(() => {});
+  api("/api/ui/background")
+    .then((data) => {
+      state.background = data;
+      applyBackground(data);
     })
     .catch(() => {});
   connectEventsWs();
   refreshWeather();
   setInterval(refreshWeather, 12 * 60 * 1000);
+
+  // 4.16.13 - Responsive interno con nombre: los breakpoints CSS reales ya
+  // existian desde 4.11.18 (768px tablet, 1200px desktop, verificados con
+  // getComputedStyle contra la Pi real) - esto no los reconstruye, solo
+  // expone un concepto con nombre (PORTRAIT_SMALL/PORTRAIT_MEDIUM/etc) que
+  // el resto de la app puede consultar via state.screenMode en vez de
+  // reinventar sus propios chequeos de ancho sueltos.
+  function computeScreenMode() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const portrait = h >= w;
+    const touch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+    const size = w < 768 ? "small" : w < 1200 ? "medium" : "large";
+    const mode = `${portrait ? "PORTRAIT" : "LANDSCAPE"}_${size.toUpperCase()}`;
+    return { mode, width: w, height: h, portrait, touch, dpr: window.devicePixelRatio || 1 };
+  }
+  function applyScreenMode() {
+    state.screenMode = computeScreenMode();
+    document.documentElement.setAttribute("data-screen-mode", state.screenMode.mode);
+    document.documentElement.setAttribute("data-touch", state.screenMode.touch ? "1" : "0");
+  }
+  applyScreenMode();
+  window.addEventListener("resize", applyScreenMode);
+
+  // 4.16.15 - Accesibilidad: se aplica lo antes posible al arrancar (no
+  // espera a que se abra Configuracion), para que texto grande/contraste/
+  // reducir animaciones esten activos desde el primer render si el
+  // usuario ya los tenia puestos.
+  function applyAccessibility(prefs) {
+    state.accessibility = prefs;
+    const html = document.documentElement;
+    html.toggleAttribute("data-a11y-large-text", !!prefs.largeText);
+    html.toggleAttribute("data-a11y-high-contrast", !!prefs.highContrast);
+    html.toggleAttribute("data-a11y-reduce-motion", !!prefs.reduceMotion);
+    html.toggleAttribute("data-a11y-visual-vibration", !!prefs.visualVibration);
+  }
+  api("/api/ui/accessibility")
+    .then(applyAccessibility)
+    .catch(() => {});
 
   // Tras OAuth callback: /?spotify=connected|error
   try {
