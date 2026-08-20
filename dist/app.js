@@ -8438,7 +8438,7 @@
             <button type="button" data-dev-open-history>Historial</button>
             ${wolBtn}
             ${
-              (focus.capabilities || {}).remote_access && perms.wol && perms.power
+              (focus.capabilities || {}).remote_access && perms.remote_access && perms.wol && perms.power
                 ? `<button type="button" data-dev-remote-work="${focus.id}" data-dev-remote-work-name="${escHtml(focus.name || focus.id)}">🧑‍💻 Trabajo remoto</button>`
                 : ""
             }
@@ -8458,9 +8458,11 @@
         </div>
         <h3>Permisos</h3>
         <div class="devices-perms">
-          ${["metrics","power","apps","processes","wol"].map((k) =>
-            `<label><input type="checkbox" data-perm="${k}" ${perms[k] ? "checked" : ""}/> ${k}</label>`
-          ).join("")}
+          ${["metrics","power","apps","processes","wol"]
+            .concat((focus.capabilities || {}).remote_access ? ["remote_access"] : [])
+            .map((k) =>
+              `<label><input type="checkbox" data-perm="${k}" ${perms[k] ? "checked" : ""}/> ${k}</label>`
+            ).join("")}
           <button type="button" data-perm-save class="config-btn">Guardar permisos</button>
         </div>
         <h3>Actividad (procesos)</h3>
