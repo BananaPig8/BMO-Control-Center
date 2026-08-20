@@ -7994,6 +7994,9 @@
     "registry",
     "system idle process",
     "memory compression",
+    // 2026-08-20 - usuario teletrabajando por AnyDesk ahora mismo: nunca
+    // debe poder cerrarse por accidente desde la tabla de procesos.
+    "anydesk.exe",
   ]);
 
   function launcherAppsHtml(focus) {
