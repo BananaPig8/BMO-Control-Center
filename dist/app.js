@@ -4992,21 +4992,12 @@
       });
     }
 
-    // 4.11.10 - Escenas como tiles en Inicio. Deliberadamente oculto por
-    // completo si no hay escenas reales creadas - un mensaje "sin escenas"
-    // en la pantalla principal seria ruido, no informacion util; en el
-    // Menu rapido (4.11.9) SI se muestra ese mensaje, porque ahi el usuario
-    // fue a buscar escenas especificamente.
+    // 20/08/2026 - a peticion explicita del usuario, Escenas ya NO se
+    // muestra en Inicio pase lo que pase (antes aparecia sola en cuanto
+    // hubiera alguna escena real creada, 4.11.10). Sigue disponible igual
+    // que siempre en Sistema -> Escenas y en el Menu rapido.
     const homeScenesSection = document.getElementById("home-scenes-section");
-    const homeScenesGrid = document.getElementById("home-scenes");
-    if (homeScenesSection && homeScenesGrid) {
-      const scenesArr = state.scenes || [];
-      homeScenesSection.hidden = scenesArr.length === 0;
-      if (scenesArr.length) {
-        homeScenesGrid.innerHTML = scenesArr.map(sceneTileHtml).join("");
-        bindSceneTiles(homeScenesGrid, scenesArr);
-      }
-    }
+    if (homeScenesSection) homeScenesSection.hidden = true;
 
     const all = (state.agentDevices && state.agentDevices.devices) || [];
     const pi =
