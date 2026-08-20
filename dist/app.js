@@ -4960,7 +4960,11 @@
           <button type="button" class="hds-arrow" id="home-device-next" aria-label="Dispositivo siguiente">›</button>
         </div>
         <p>${escHtml(osLabel)} · ${escHtml(ago)}</p>
-        <div class="home-hw-pill">${escHtml(cpuModel)} · ${escHtml(gpuModel)}</div>
+        <div class="home-hw-pill">${
+          mi.type === "android"
+            ? escHtml([mi.manufacturer, mi.model].filter(Boolean).join(" ") || "Android")
+            : `${escHtml(cpuModel)} · ${escHtml(gpuModel)}`
+        }</div>
       `;
       els.homeHero.querySelector("#home-device-prev")?.addEventListener("click", () => cycleHomeDevice(-1));
       els.homeHero.querySelector("#home-device-next")?.addEventListener("click", () => cycleHomeDevice(1));
@@ -4981,36 +4985,54 @@
         ? `${escHtml(gpuModel)} · ${pctOrDash(gpuTemp)} °C`
         : escHtml(gpuModel);
 
-    const cards = [
-      {
-        key: "cpu",
-        value: cpuPct != null ? `${cpuPct}%` : "—",
-        bar: Number(cpuPct) || 0,
-        sub: cpuSub,
-        ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M9 3v2M12 3v2M15 3v2M9 19v2M12 19v2M15 19v2M3 9h2M3 12h2M3 15h2M19 9h2M19 12h2M19 15h2"/></svg>`,
-      },
-      {
-        key: "ram",
-        value: ramPct != null ? `${ramPct}%` : "—",
-        bar: Number(ramPct) || 0,
-        sub: escHtml(ramSub),
-        ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 7v10M11 7v10M15 7v10M19 10v4"/></svg>`,
-      },
-      {
-        key: "gpu",
-        value: gpuPct != null ? `${gpuPct}%` : "—",
-        bar: Number(gpuPct) || 0,
-        sub: gpuSub,
-        ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg>`,
-      },
-      {
-        key: "temp",
-        value: primaryTemp != null ? `${pctOrDash(primaryTemp)}°` : "—",
-        bar: primaryTemp != null ? Math.max(0, Math.min(100, Number(primaryTemp))) : 0,
-        sub: tempSource || "sin datos",
-        ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 14.5V5a2 2 0 1 0-4 0v9.5a4 4 0 1 0 4 0z"/><path d="M10 8h1"/></svg>`,
-      },
-    ];
+    const cards =
+      mi.type === "android"
+        ? [
+            {
+              key: "battery",
+              value: mi.batteryPct != null ? `${mi.batteryPct}%` : "—",
+              bar: mi.batteryPct != null ? Number(mi.batteryPct) : 0,
+              sub: mi.batteryCharging ? "Cargando ⚡" : "Batería",
+              ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2" y="7" width="18" height="10" rx="2"/><path d="M22 10v4"/></svg>`,
+            },
+            {
+              key: "system",
+              value: mi.osVersion ? `Android ${mi.osVersion}` : "Android",
+              bar: 0,
+              sub: escHtml([mi.manufacturer, mi.model].filter(Boolean).join(" ") || "—"),
+              ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>`,
+            },
+          ]
+        : [
+            {
+              key: "cpu",
+              value: cpuPct != null ? `${cpuPct}%` : "—",
+              bar: Number(cpuPct) || 0,
+              sub: cpuSub,
+              ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M9 3v2M12 3v2M15 3v2M9 19v2M12 19v2M15 19v2M3 9h2M3 12h2M3 15h2M19 9h2M19 12h2M19 15h2"/></svg>`,
+            },
+            {
+              key: "ram",
+              value: ramPct != null ? `${ramPct}%` : "—",
+              bar: Number(ramPct) || 0,
+              sub: escHtml(ramSub),
+              ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 7v10M11 7v10M15 7v10M19 10v4"/></svg>`,
+            },
+            {
+              key: "gpu",
+              value: gpuPct != null ? `${gpuPct}%` : "—",
+              bar: Number(gpuPct) || 0,
+              sub: gpuSub,
+              ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg>`,
+            },
+            {
+              key: "temp",
+              value: primaryTemp != null ? `${pctOrDash(primaryTemp)}°` : "—",
+              bar: primaryTemp != null ? Math.max(0, Math.min(100, Number(primaryTemp))) : 0,
+              sub: tempSource || "sin datos",
+              ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 14.5V5a2 2 0 1 0-4 0v9.5a4 4 0 1 0 4 0z"/><path d="M10 8h1"/></svg>`,
+            },
+          ];
 
     if (els.homeMetrics) {
       els.homeMetrics.innerHTML = cards

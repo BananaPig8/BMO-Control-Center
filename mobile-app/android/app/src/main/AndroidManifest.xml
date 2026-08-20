@@ -32,4 +32,11 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 20/08/2026 - Gato-Cam usa getUserMedia (cámara+micro) dentro del
+         WebView; sin estos permisos declarados, Capacitor nunca llega a
+         pedir el permiso en tiempo de ejecución, se deniega en silencio. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 </manifest>
