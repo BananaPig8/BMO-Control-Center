@@ -8458,8 +8458,8 @@
         </div>
         <h3>Permisos</h3>
         <div class="devices-perms">
-          ${["metrics","power","apps","processes","wol","terminal"].map((k) =>
-            `<label><input type="checkbox" data-perm="${k}" ${perms[k] ? "checked" : ""} ${k === "terminal" ? "" : ""}/> ${k}</label>`
+          ${["metrics","power","apps","processes","wol"].map((k) =>
+            `<label><input type="checkbox" data-perm="${k}" ${perms[k] ? "checked" : ""}/> ${k}</label>`
           ).join("")}
           <button type="button" data-perm-save class="config-btn">Guardar permisos</button>
         </div>
