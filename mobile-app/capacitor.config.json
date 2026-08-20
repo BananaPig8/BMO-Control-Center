@@ -1,0 +1,12 @@
+{
+  "appId": "com.bmo.controlcenter",
+  "appName": "BMO Control Center",
+  "webDir": "www",
+  "server": {
+    "url": "https://bmo-pi.tail0f0c76.ts.net",
+    "cleartext": false
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

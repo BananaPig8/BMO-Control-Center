@@ -339,8 +339,29 @@
         : false;
     if (!isNative) return;
 
+    // @capacitor/device (nativo, no una API del navegador) - de aquí sale
+    // el modelo real ("Pixel 10 Pro XL"), no algo adivinado del user-agent.
+    // Solo hace falta pedirlo una vez, el modelo no cambia entre heartbeats.
+    let deviceInfoPromise = null;
+    function getDeviceInfoOnce() {
+      if (!deviceInfoPromise) {
+        deviceInfoPromise = (async () => {
+          try {
+            const DevicePlugin = window.Capacitor.Plugins && window.Capacitor.Plugins.Device;
+            if (!DevicePlugin) return null;
+            return await DevicePlugin.getInfo();
+          } catch {
+            return null;
+          }
+        })();
+      }
+      return deviceInfoPromise;
+    }
+
     async function sendHeartbeat() {
-      const payload = { hostname: "movil", os: "Android", platform: "Android (app BMO)" };
+      // "platform" es lo que deviceAgentService.js realmente muestra como
+      // "Sistema" (ver nota más abajo) - se deja simple a propósito.
+      const payload = { hostname: "movil", os: "Android", platform: "Android" };
       try {
         if (navigator.getBattery) {
           const battery = await navigator.getBattery();
@@ -349,6 +370,17 @@
         }
       } catch {
         /* API de batería no disponible en este WebView, no pasa nada */
+      }
+      const info = await getDeviceInfoOnce();
+      if (info) {
+        payload.model = info.model || null;
+        payload.manufacturer = info.manufacturer || null;
+        payload.os_version = info.osVersion || null;
+        // ojo: NO tocar payload.platform aquí — deviceAgentService.js usa
+        // liveEntry.platform como reserva para el campo "os" (pensado para
+        // MI-PC), y pisarlo con el modelo del móvil hacía que "Sistema"
+        // mostrara "Google Pixel..." en vez de "Android". model/manufacturer
+        // ya van en sus propios campos, no hace falta duplicarlos ahí.
       }
       api("/api/devices", { method: "POST", body: JSON.stringify(payload) }).catch(() => {
         /* heartbeat es best-effort, un fallo puntual no debe interrumpir la app */
@@ -8280,6 +8312,27 @@
       detail = `<div class="perf-block devices-detail">
         <h3>${escHtml(focus.name)}</h3>
         <div class="meta">Placeholder — agente ${escHtml(focus.type)} aún no implementado.</div>
+      </div>`;
+    } else if (focus.type === "android") {
+      // 20/08/2026 - ficha propia para el móvil: solo presencia/batería
+      // (viene de la app Capacitor vía heartbeat), nada de CPU/RAM/GPU que
+      // no tiene sentido aquí y solo saldría lleno de guiones.
+      const last = focus.lastSeen ? new Date(focus.lastSeen).toLocaleString("es-ES") : "—";
+      const batteryTxt =
+        focus.batteryPct == null
+          ? "—"
+          : `${focus.batteryPct}%${focus.batteryCharging ? " ⚡ cargando" : ""}`;
+      detail = `<div class="perf-block devices-detail">
+        <h3>${escHtml(focus.name)}</h3>
+        <div class="devices-kv">
+          <div class="cell"><div class="label">Estado</div><div class="value">${heartbeatTierBadge(focus.heartbeatTier)}</div></div>
+          <div class="cell"><div class="label">Salud</div><div class="value">${healthDot(focus.health)} ${escHtml(healthLabel(focus.health))}</div></div>
+          <div class="cell"><div class="label">Modelo</div><div class="value">${escHtml([focus.manufacturer, focus.model].filter(Boolean).join(" ") || "—")}</div></div>
+          <div class="cell"><div class="label">Sistema</div><div class="value">${escHtml(focus.os || "Android")}${focus.osVersion ? ` ${escHtml(focus.osVersion)}` : ""}</div></div>
+          <div class="cell"><div class="label">Batería</div><div class="value">${escHtml(batteryTxt)}</div></div>
+          <div class="cell"><div class="label">Último contacto</div><div class="value">${escHtml(last)}</div></div>
+        </div>
+        <p class="meta">Solo se ve online mientras tienes la app de BMO abierta — no funciona en segundo plano.</p>
       </div>`;
     } else if (focus.id === "raspberry" || focus.type === "self") {
       const m = focus.metrics || {};
