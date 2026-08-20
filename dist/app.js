@@ -8321,7 +8321,11 @@
         return `<div class="devices-card-btn ${selected}" data-agent-device="${d.id}" role="button" tabindex="0">
           <span class="ico">${deviceIcon(d)}</span>
           <span><div class="title">${escHtml(d.name || d.id)}</div>
-          <div class="sub">${escHtml(d.os || d.type || "")} · ${escHtml(d.ip || "—")}</div></span>
+          <div class="sub">${
+            d.type === "android"
+              ? escHtml(`${d.os || "Android"}${d.osVersion ? " " + d.osVersion : ""} · ${d.model || "—"}`)
+              : `${escHtml(d.os || d.type || "")} · ${escHtml(d.ip || "—")}`
+          }</div></span>
           <span class="status-line">${healthDot(d.health)} <span class="dot ${dot}"></span><span>${status}</span>
             <button type="button" class="dev-fav-btn" data-dev-fav="${d.id}" data-fav="${d.favorite ? "1" : "0"}" aria-label="Favorito">${d.favorite ? "⭐" : "☆"}</button>
           </span>
