@@ -324,6 +324,41 @@
     return res.json();
   }
 
+  // 20/08/2026 - App Android (Capacitor, envoltorio nativo sobre esta misma
+  // web vía Tailscale): mientras esté abierta en primer plano, se
+  // autorreporta como el dispositivo "movil" reusando el MISMO endpoint de
+  // heartbeat que ya usa el agente de MI-PC - nada de infraestructura
+  // nueva. Deliberadamente solo en primer plano (sin plugin de tareas en
+  // segundo plano): heartbeat cada 25s, si se cierra la app dejan de
+  // llegar y a los 30s BMO ya la marca offline sola (mismo umbral que
+  // cualquier otro dispositivo).
+  (function () {
+    const isNative =
+      typeof window !== "undefined" && window.Capacitor && typeof window.Capacitor.isNativePlatform === "function"
+        ? window.Capacitor.isNativePlatform()
+        : false;
+    if (!isNative) return;
+
+    async function sendHeartbeat() {
+      const payload = { hostname: "movil", os: "Android", platform: "Android (app BMO)" };
+      try {
+        if (navigator.getBattery) {
+          const battery = await navigator.getBattery();
+          payload.battery_pct = Math.round(battery.level * 100);
+          payload.battery_charging = !!battery.charging;
+        }
+      } catch {
+        /* API de batería no disponible en este WebView, no pasa nada */
+      }
+      api("/api/devices", { method: "POST", body: JSON.stringify(payload) }).catch(() => {
+        /* heartbeat es best-effort, un fallo puntual no debe interrumpir la app */
+      });
+    }
+
+    sendHeartbeat();
+    setInterval(sendHeartbeat, 25000);
+  })();
+
   function closeConfigPanel() {
     els.configPanel.hidden = true;
     state.configPluginId = null;
