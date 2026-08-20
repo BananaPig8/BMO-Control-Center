@@ -7947,6 +7947,23 @@
     return `⚠️ Actualiza el agente (${escHtml(compat.reason || "")})`;
   }
 
+  // 5.1.9 - Semáforo de salud (CPU/RAM/disco/temperatura), distinto del
+  // "estado" manual (disponible/gaming/...) que ya mostraba estadoBadge.
+  function healthDot(health) {
+    const level = health && health.level;
+    if (level === "critical") return "🔴";
+    if (level === "attention") return "🟡";
+    if (level === "healthy") return "🟢";
+    return "⚪";
+  }
+
+  function healthLabel(health) {
+    const level = health && health.level;
+    if (level === "unknown") return "Sin datos (offline)";
+    if (!health || !health.reasons || !health.reasons.length) return "Todo normal";
+    return health.reasons.join(", ");
+  }
+
   function deviceIcon(d) {
     if (d.type === "self" || d.id === "raspberry") {
       return `<img src="./assets/raspberry.png" alt="" style="width:24px;height:24px;object-fit:contain" />`;
@@ -8210,12 +8227,17 @@
         const selected = d.id === focus.id ? "selected" : "";
         const status = d.stub ? "Stub" : d.online ? "Online" : "Offline";
         const dot = d.stub ? "off" : d.online ? "" : "off";
-        return `<button type="button" class="devices-card-btn ${selected}" data-agent-device="${d.id}">
+        // 5.1.9/5.1.10 - health y favorito. El wrapper pasa de <button> a
+        // <div role=button> porque ahora aloja un <button> real dentro (la
+        // estrella) - anidar botones es HTML invalido y rompia el click.
+        return `<div class="devices-card-btn ${selected}" data-agent-device="${d.id}" role="button" tabindex="0">
           <span class="ico">${deviceIcon(d)}</span>
           <span><div class="title">${escHtml(d.name || d.id)}</div>
           <div class="sub">${escHtml(d.os || d.type || "")} · ${escHtml(d.ip || "—")}</div></span>
-          <span class="status-line"><span class="dot ${dot}"></span><span>${status}</span></span>
-        </button>`;
+          <span class="status-line">${healthDot(d.health)} <span class="dot ${dot}"></span><span>${status}</span>
+            <button type="button" class="dev-fav-btn" data-dev-fav="${d.id}" data-fav="${d.favorite ? "1" : "0"}" aria-label="Favorito">${d.favorite ? "⭐" : "☆"}</button>
+          </span>
+        </div>`;
       })
       .join("");
 
@@ -8231,6 +8253,7 @@
         <h3>${escHtml(focus.name)}</h3>
         <div class="devices-kv">
           <div class="cell"><div class="label">Estado</div><div class="value">Online (self) · ${estadoBadge(focus.estado)}</div></div>
+          <div class="cell"><div class="label">Salud</div><div class="value">${healthDot(focus.health)} ${escHtml(healthLabel(focus.health))}</div></div>
           <div class="cell"><div class="label">IP</div><div class="value">${escHtml(focus.ip || "—")}</div></div>
           <div class="cell"><div class="label">OS</div><div class="value">${escHtml(focus.os || "Linux")}</div></div>
           <div class="cell"><div class="label">CPU</div><div class="value">${fmtNum(focus.cpu, "%")}</div></div>
@@ -8261,6 +8284,7 @@
         <h3>${escHtml(focus.name)}</h3>
         <div class="devices-kv">
           <div class="cell"><div class="label">Estado</div><div class="value">${heartbeatTierBadge(focus.heartbeatTier)} · ${estadoBadge(focus.estado)}</div></div>
+          <div class="cell"><div class="label">Salud</div><div class="value">${healthDot(focus.health)} ${escHtml(healthLabel(focus.health))}</div></div>
           <div class="cell"><div class="label">Último contacto</div><div class="value">${escHtml(last)}</div></div>
           <div class="cell"><div class="label">Conexión</div><div class="value">${fmtNum(focus.latencyMs, " ms")}<br>Agente v${escHtml(focus.agentVersion || "—")} · BMO v${escHtml(focus.bmoVersion || "—")}<br>${agentCompatBadge(focus.agentCompatibility)}</div></div>
           <div class="cell"><div class="label">IP</div><div class="value">${escHtml(focus.ip || "—")}</div></div>
@@ -8285,6 +8309,12 @@
           </label>
           <button type="button" data-estado-save class="config-btn">Guardar estado</button>
         </div>
+        <div class="devices-estado">
+          <label>Etiquetas (separadas por coma)
+            <input type="text" data-tags-input value="${escHtml((focus.tags || []).join(", "))}" placeholder="gaming, trabajo, principal" />
+          </label>
+          <button type="button" data-tags-save class="config-btn">Guardar etiquetas</button>
+        </div>
         <div class="devices-actions-group">
           <h4>Escenas rápidas</h4>
           <div class="devices-actions">
@@ -8294,6 +8324,11 @@
             <button type="button" data-dev-open-catalog>Catálogo de apps</button>
             <button type="button" data-dev-open-history>Historial</button>
             ${wolBtn}
+            ${
+              (focus.capabilities || {}).remote_access && perms.wol && perms.power
+                ? `<button type="button" data-dev-remote-work="${focus.id}" data-dev-remote-work-name="${escHtml(focus.name || focus.id)}">🧑‍💻 Trabajo remoto</button>`
+                : ""
+            }
           </div>
         </div>
         <div class="devices-actions-group">
@@ -8337,9 +8372,20 @@
     els.devicesBody.innerHTML = `<div class="devices-list">${listHtml}</div>${detail}`;
 
     els.devicesBody.querySelectorAll("[data-agent-device]").forEach((btn) => {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", (e) => {
+        if (e.target.closest("[data-dev-fav]")) return; // la estrella maneja su propio click
         state.agentFocusId = btn.getAttribute("data-agent-device");
         refreshDevicesPanel().catch((err) => toast(err.message));
+      });
+    });
+    els.devicesBody.querySelectorAll("[data-dev-fav]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = btn.getAttribute("data-dev-fav");
+        const next = btn.getAttribute("data-fav") !== "1";
+        api(`/api/devices/${id}/favorite`, { method: "PUT", body: JSON.stringify({ favorite: next }) })
+          .then(() => refreshDevicesPanel())
+          .catch((err) => toast(err.message || "No se pudo guardar el favorito"));
       });
     });
     els.devicesBody.querySelectorAll("[data-dev-profile]").forEach((btn) => {
@@ -8427,6 +8473,21 @@
           return refreshDevicesPanel();
         })
         .catch((err) => toast(err.message || "Error permisos"));
+    });
+    els.devicesBody.querySelector("[data-tags-save]")?.addEventListener("click", () => {
+      const input = els.devicesBody.querySelector("[data-tags-input]");
+      const tags = (input && input.value ? input.value.split(",") : []).map((t) => t.trim()).filter(Boolean);
+      api(`/api/devices/${focus.id}/tags`, { method: "PUT", body: JSON.stringify({ tags }) })
+        .then(() => {
+          toast("Etiquetas guardadas");
+          return refreshDevicesPanel();
+        })
+        .catch((err) => toast(err.message || "Error al guardar etiquetas"));
+    });
+    els.devicesBody.querySelector("[data-dev-remote-work]")?.addEventListener("click", (e) => {
+      const id = e.currentTarget.getAttribute("data-dev-remote-work");
+      const name = e.currentTarget.getAttribute("data-dev-remote-work-name") || id;
+      runRemoteWork(id, name);
     });
   }
 
@@ -8526,6 +8587,43 @@
     } catch (err) {
       toast(err.message || `No se pudo aplicar ${profileId}`);
     }
+  }
+
+  // 5.1.13-16 - Remote Work Engine: confirma (tiene efectos reales sobre el
+  // equipo), dispara la orquestación en segundo plano y sondea la tarea con
+  // el mismo sistema de tareas que ya usan backups/updates.
+  async function runRemoteWork(deviceId, deviceName) {
+    const ok = await showConfirmModal({
+      title: `¿Preparar ${deviceName} para trabajo remoto?`,
+      message: "Encenderá el equipo si hace falta, cerrará Steam y Discord, abrirá VS Code y Chrome, y pondrá Spotify a reproducir.",
+      confirmLabel: "Preparar",
+    });
+    if (!ok) return;
+    toast("🟡 Preparando trabajo remoto…");
+    try {
+      const res = await api(`/api/devices/${deviceId}/remote-work`, { method: "POST", body: "{}" });
+      pollRemoteWorkTask(res.taskId, deviceId);
+    } catch (err) {
+      toast(err.message || "No se pudo iniciar el trabajo remoto");
+    }
+  }
+
+  function pollRemoteWorkTask(taskId, deviceId) {
+    if (state.remoteWorkTimer) clearInterval(state.remoteWorkTimer);
+    state.remoteWorkTimer = setInterval(async () => {
+      let task;
+      try {
+        task = await api(`/api/tasks/${taskId}`);
+      } catch {
+        return; // sondeo transitorio, se reintenta en el siguiente tick
+      }
+      if (!task || task.status === "running") return;
+      clearInterval(state.remoteWorkTimer);
+      state.remoteWorkTimer = null;
+      const msg = (task.detail && task.detail.message) || (task.status === "done" ? "Listo" : "Error");
+      toast(task.status === "done" ? `🟢 ${msg}` : `⚠️ ${msg}`);
+      if (state.agentFocusId === deviceId) refreshDevicesPanel().catch(() => {});
+    }, 3000);
   }
 
   async function refreshDevicesPanel() {
@@ -9137,6 +9235,9 @@
     { label: "Plex", icon: "🎬", note: "Pendiente de servidor Plex" },
     { label: "Home Assistant", icon: "🏠", note: "No configurado" },
     { label: "SupermarketComparator", icon: "🛒", note: "Pendiente de definir integración" },
+    // 5.1.11 - registrado en el Integration Registry del backend
+    // (GET /api/integrations) pero sin implementación real todavía.
+    { label: "Telegram", icon: "✈️", note: "No configurado" },
   ];
 
   function integrationsDot(status) {
