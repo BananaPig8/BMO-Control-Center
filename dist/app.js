@@ -1,10 +1,15 @@
 (() => {
   // IP de la Pi en la LAN: único punto a tocar si cambia de dirección.
   const BMO_HOST = "192.168.1.40";
-  const API_BASE =
-    window.location.port === "8080" || window.location.hostname === "127.0.0.1"
-      ? ""
-      : `http://${BMO_HOST}:8080`;
+  // 20/08/2026 - la API SIEMPRE vive en el mismo origen que sirve esta
+  // página (kiosco :8080, IP de Tailscale :8080, o el proxy HTTPS de
+  // "tailscale serve" en :443 con host bmo-pi.*.ts.net) - la única
+  // excepción real es el servidor de desarrollo local (`npm run dev`,
+  // puerto 5173), que sirve la UI sin backend detrás y necesita apuntar
+  // a la Pi real. Antes esto se adivinaba por puerto/host conocidos y
+  // dejaba fuera "tailscale serve" (caía al IP de LAN fijo, inalcanzable
+  // desde fuera de casa, y encima http:// desde una página https://).
+  const API_BASE = window.location.port === "5173" ? `http://${BMO_HOST}:8080` : "";
   const API_KEY = "6cf4e9146401b55bfb0f324e00b916981e0afe5c5705af46dc58a55cefd12495";
   // Cuenta/gestión real de Docker en este BMO
   const PORTAINER_URL = `http://${BMO_HOST}:9000`;
