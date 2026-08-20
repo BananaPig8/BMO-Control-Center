@@ -10080,8 +10080,13 @@
     { value: "start", label: "Iniciar contenedor" },
     { value: "restart", label: "Reiniciar contenedor" },
     { value: "stop", label: "Parar contenedor" },
+    { value: "compose-deploy", label: "Redesplegar stack" },
   ];
-  const BMO_ACTIONS = [{ value: "message", label: "Mostrar mensaje (en Eventos)" }];
+  const BMO_ACTIONS = [
+    { value: "message", label: "Mostrar mensaje (en Eventos)" },
+    { value: "log", label: "Escribir en el log" },
+    { value: "backup", label: "Backup de configuración" },
+  ];
   const SYSTEM_ACTIONS = [{ value: "wait", label: "Esperar" }];
 
   function closeScenesPanel() {
@@ -10123,13 +10128,22 @@
     }
     if (a.target === "docker") {
       const label = (DOCKER_ACTIONS.find((x) => x.value === a.action) || {}).label || a.action;
-      return `Docker · ${label}: ${escHtml(a.params?.container || "")}`;
+      const ref = a.action === "compose-deploy" ? a.params?.stackId : a.params?.container;
+      return `Docker · ${label}: ${escHtml(ref || "")}`;
     }
     if (a.target === "bmo") {
       const label = (BMO_ACTIONS.find((x) => x.value === a.action) || {}).label || a.action;
+      if (a.action === "backup") return `BMO · ${label}`;
       return `BMO · ${label}: ${escHtml(a.params?.text || "")}`;
     }
     if (a.target === "system") {
+      if (a.action === "wait_until") {
+        return `Sistema · Esperar hasta: ${escHtml(a.params?.deviceId || "")} = ${escHtml(a.params?.state || "")} (máx ${escHtml(a.params?.timeoutSeconds ?? "")}s)`;
+      }
+      if (a.action === "if") {
+        const c = a.params?.condition || {};
+        return `Sistema · SI ${escHtml(c.deviceId || c.container || "")} ${escHtml(c.type || "")}…`;
+      }
       return `Sistema · Esperar: ${escHtml(a.params?.seconds ?? "")}s`;
     }
     const label = (MIPC_ACTIONS.find((x) => x.value === a.action) || {}).label || a.action;
@@ -10255,16 +10269,19 @@
     });
   }
 
+  // 5.2.17 - dispara en segundo plano (run-async) y sondea la tarea, en vez
+  // de dejar la petición HTTP colgada hasta el final (que con un
+  // wait/wait_until puede tardar minutos) - mismo patrón que ya usa el
+  // Remote Work Engine (pollRemoteWorkTask), aplicado aquí a escenas.
   async function runSceneFromPanel(id) {
     state.scenesView = "result";
     state.sceneResultFrom = "list";
-    state.sceneRunResult = { sceneName: "…", steps: [], running: true };
+    state.sceneRunResult = { sceneName: "…", steps: [], phase: "queued" };
     if (els.scenesTitle) els.scenesTitle.textContent = "Ejecutando…";
-    els.scenesBody.innerHTML = `<p class="tagline">Ejecutando escena…</p>`;
+    els.scenesBody.innerHTML = `<p class="tagline">Poniendo en cola…</p>`;
     try {
-      const result = await api(`/api/scenes/${id}/run`, { method: "POST", body: "{}" });
-      state.sceneRunResult = result;
-      renderSceneResult();
+      const { taskId } = await api(`/api/scenes/${id}/run-async`, { method: "POST", body: "{}" });
+      pollSceneRunTask(taskId);
     } catch (err) {
       state.scenesView = "list";
       toast(err.message || "Error ejecutando escena");
@@ -10272,29 +10289,92 @@
     }
   }
 
+  function pollSceneRunTask(taskId) {
+    if (state.sceneRunTimer) clearInterval(state.sceneRunTimer);
+    state.sceneRunTaskId = taskId;
+    const tick = async () => {
+      let task;
+      try {
+        task = await api(`/api/tasks/${taskId}`);
+      } catch {
+        return; // sondeo transitorio
+      }
+      state.sceneRunResult = { ...(task.detail || {}), taskStatus: task.status };
+      renderSceneResult();
+      if (task.status !== "running") {
+        clearInterval(state.sceneRunTimer);
+        state.sceneRunTimer = null;
+        state.sceneRunTaskId = null;
+      }
+    };
+    tick();
+    state.sceneRunTimer = setInterval(tick, 2000);
+  }
+
+  async function cancelSceneRun() {
+    if (!state.sceneRunTaskId) return;
+    try {
+      await api(`/api/scenes/runs/${state.sceneRunTaskId}/cancel`, { method: "POST", body: "{}" });
+      toast("Cancelando…");
+    } catch (err) {
+      toast(err.message || "No se pudo cancelar");
+    }
+  }
+
+  // 5.2.4 - un paso "if" trae su propia sub-lista de pasos (la rama que se
+  // eligió) - se renderiza igual que cualquier fila, pero anidada, para que
+  // se vea qué rama se tomó y qué hizo, no solo "condición cumplida".
+  function stepRowHtml(s, depth) {
+    const indent = depth > 0 ? `style="margin-left:${depth * 16}px"` : "";
+    if (s.blocked) {
+      return `<div class="sys-list-row blocked" ${indent}>
+        <span>⚠️ Acción bloqueada — ${actionSummary(s)}</span>
+        <span class="sic-sub">Falta el permiso "${escHtml(s.permission)}" en este dispositivo</span>
+      </div>`;
+    }
+    const icon = s.status === "cancelled" ? "⏹" : s.status === "timeout" ? "⏱" : s.ok ? "✓" : "✗";
+    const row = `<div class="sys-list-row" ${indent}>
+        <span>${icon} ${actionSummary(s)}</span>
+        <span class="sic-sub">${escHtml(s.detail || "")}</span>
+      </div>`;
+    if (s.target === "system" && s.action === "if" && Array.isArray(s.steps)) {
+      return row + s.steps.map((sub) => stepRowHtml(sub, depth + 1)).join("");
+    }
+    return row;
+  }
+
   function renderSceneResult() {
     const r = state.sceneRunResult;
     if (els.scenesTitle) els.scenesTitle.textContent = r.sceneName || "Resultado";
-    const rows = (r.steps || [])
-      .map((s) => {
-        if (s.blocked) {
-          return `<div class="sys-list-row blocked">
-            <span>⚠️ Acción bloqueada — ${actionSummary(s)}</span>
-            <span class="sic-sub">Falta el permiso "${escHtml(s.permission)}" en este dispositivo</span>
-          </div>`;
-        }
-        return `<div class="sys-list-row">
-        <span>${s.ok ? "✓" : "✗"} ${actionSummary(s)}</span>
-        <span class="sic-sub">${escHtml(s.detail || "")}</span>
-      </div>`;
-      })
-      .join("");
+    const running = r.taskStatus === "running";
+    if (running && (r.phase === "queued" || r.phase === "running") && !(r.steps || []).length) {
+      els.scenesBody.innerHTML = `<p class="tagline">${r.phase === "queued" ? "En cola…" : "Ejecutando…"}</p>`;
+      return;
+    }
+    if (running && r.phase === "waiting") {
+      const cs = r.currentStep || {};
+      const waitTxt =
+        cs.action === "wait_until"
+          ? `esperando ${escHtml(cs.params?.deviceId || "")} = ${escHtml(cs.params?.state || "")}`
+          : "esperando";
+      els.scenesBody.innerHTML = `
+        <p class="tagline scene-result-status warn">🟡 ${escHtml((r.sceneName || "Escena").toUpperCase())} — ${waitTxt}…</p>
+        ${(r.steps || []).map((s) => stepRowHtml(s, 0)).join("")}
+        <div class="docker-actions" style="margin-top:12px">
+          <button type="button" class="danger" id="scene-result-cancel">⏹ Cancelar</button>
+        </div>`;
+      els.scenesBody.querySelector("#scene-result-cancel")?.addEventListener("click", cancelSceneRun);
+      return;
+    }
+    const rows = (r.steps || []).map((s) => stepRowHtml(s, 0)).join("");
     const total = r.total || (r.steps || []).length;
     const completed = r.completed ?? (r.steps || []).filter((s) => s.ok).length;
     const failedSteps = (r.steps || []).filter((s) => !s.ok);
     const nameUpper = escHtml((r.sceneName || "Escena").toUpperCase());
     let statusLine;
-    if (completed === total && total > 0) {
+    if (r.phase === "cancelled") {
+      statusLine = `<p class="tagline scene-result-status warn" style="margin-top:12px">⏹ ${nameUpper} CANCELADO</p>`;
+    } else if (completed === total && total > 0) {
       statusLine = `<p class="tagline scene-result-status ok" style="margin-top:12px">✓ ${nameUpper} COMPLETADO</p>`;
     } else if (completed > 0) {
       statusLine = `<p class="tagline scene-result-status warn" style="margin-top:12px">⚠️ ${nameUpper} PARCIAL</p>`;
@@ -10633,6 +10713,9 @@
       const mins = Math.round((Number(c.value) || 0) / 60);
       return `${escHtml(c.deviceId)} · inactivo ${c.operator === "gt" ? ">" : "<"} ${mins} min`;
     }
+    if (c.type === "uptime") {
+      return `${escHtml(c.deviceId)} · encendido ${c.operator === "gt" ? ">" : "<"} ${c.value}h`;
+    }
     if (c.type === "time_window") {
       const days = c.days === "all" ? "todos los días" : (c.days || []).map((d) => DAY_LABELS[d] || d).join(",");
       return `hora ${c.operator === "gt" ? ">" : "<"} ${escHtml(c.time)} (${days})`;
@@ -10823,6 +10906,16 @@
               <label>Minutos inactivo
                 <input type="number" min="1" data-c-idle-min="${idx}" value="${mins}" />
               </label>`;
+        } else if (c.type === "uptime") {
+          paramsHtml = `<label>Condición
+                <select data-c-operator="${idx}">
+                  <option value="gt" ${c.operator === "gt" ? "selected" : ""}>Más de</option>
+                  <option value="lt" ${c.operator === "lt" ? "selected" : ""}>Menos de</option>
+                </select>
+              </label>
+              <label>Horas encendido
+                <input type="number" min="0" step="0.5" data-c-uptime-hours="${idx}" value="${c.value ?? 24}" />
+              </label>`;
         } else if (c.type === "process_running") {
           paramsHtml = `<label>Proceso (nombre)
                 <input type="text" data-c-process-name="${idx}" placeholder="steam.exe" value="${escHtml(c.processName || "")}" />
@@ -10873,6 +10966,7 @@
               <option value="docker_health" ${c.type === "docker_health" ? "selected" : ""}>Salud de contenedor Docker</option>
               <option value="spotify_playing" ${c.type === "spotify_playing" ? "selected" : ""}>Spotify reproduciendo</option>
               <option value="idle_threshold" ${c.type === "idle_threshold" ? "selected" : ""}>Inactividad</option>
+              <option value="uptime" ${c.type === "uptime" ? "selected" : ""}>Tiempo encendido</option>
               <option value="process_running" ${c.type === "process_running" ? "selected" : ""}>Proceso abierto/cerrado</option>
             </select>
           </label>
@@ -10972,6 +11066,8 @@
           draft.conditions[idx] = { type: "spotify_playing", playing: true };
         } else if (sel.value === "idle_threshold") {
           draft.conditions[idx] = { type: "idle_threshold", deviceId, operator: "gt", value: 1800 };
+        } else if (sel.value === "uptime") {
+          draft.conditions[idx] = { type: "uptime", deviceId, operator: "gt", value: 24 };
         } else if (sel.value === "process_running") {
           draft.conditions[idx] = { type: "process_running", deviceId, processName: "", running: false };
         } else {
@@ -11068,6 +11164,12 @@
       input.addEventListener("change", () => {
         const idx = Number(input.getAttribute("data-c-idle-min"));
         draft.conditions[idx].value = Math.max(1, Number(input.value) || 1) * 60;
+      });
+    });
+    els.automationsBody.querySelectorAll("[data-c-uptime-hours]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const idx = Number(input.getAttribute("data-c-uptime-hours"));
+        draft.conditions[idx].value = Math.max(0, Number(input.value) || 0);
       });
     });
     els.automationsBody.querySelectorAll("[data-c-process-name]").forEach((input) => {
