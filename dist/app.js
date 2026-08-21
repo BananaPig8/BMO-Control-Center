@@ -9155,27 +9155,37 @@
     });
   }
 
-  const AI_PROVIDER_DEFAULT_MODEL = { anthropic: "claude-sonnet-4-5-20250929", ollama: "qwen3:4b", openai: "gpt-4o-mini" };
+  const AI_PROVIDER_DEFAULT_MODEL = {
+    anthropic: "claude-sonnet-4-5-20250929",
+    ollama: "qwen3:4b",
+    openai: "gpt-4o-mini",
+    "ollama-cloud": "gpt-oss:20b",
+  };
+  const AI_PROVIDER_APIKEY_PLACEHOLDER = { openai: "sk-...", "ollama-cloud": "clave de ollama.com/settings/keys" };
 
   function renderAiSettingsView() {
     const s = state.aiStatus || {};
-    const provider = ["ollama", "openai"].includes(s.provider) ? s.provider : "anthropic";
-    const isOllama = provider === "ollama";
+    const provider = ["ollama", "openai", "ollama-cloud"].includes(s.provider) ? s.provider : "anthropic";
+    const isLocalOllama = provider === "ollama";
     els.aiBody.innerHTML = `
       <form id="ai-settings-form" class="ai-settings-form">
         <label>Proveedor
           <select name="provider" id="ai-provider-select">
             <option value="anthropic" ${provider === "anthropic" ? "selected" : ""}>Anthropic Claude (nube)</option>
             <option value="openai" ${provider === "openai" ? "selected" : ""}>OpenAI (nube)</option>
-            <option value="ollama" ${provider === "ollama" ? "selected" : ""}>Ollama (local, en este Pi)</option>
+            <option value="ollama-cloud" ${provider === "ollama-cloud" ? "selected" : ""}>Ollama Cloud/Turbo (nube, rápido)</option>
+            <option value="ollama" ${provider === "ollama" ? "selected" : ""}>Ollama (local, en este Pi — lento)</option>
           </select>
         </label>
-        <p class="tagline ai-ollama-note" ${isOllama ? "" : "hidden"}>
+        <p class="tagline" id="ai-ollama-local-note" ${isLocalOllama ? "" : "hidden"}>
           Corre en la propia Raspberry Pi: gratis y sin API key, pero lento (varios minutos por respuesta con qwen3:4b en esta CPU).
         </p>
-        <div id="ai-apikey-field" ${isOllama ? "hidden" : ""}>
-          <label>API key ${s.configured && !isOllama ? "(ya configurada — deja en blanco para no cambiarla)" : ""}
-            <input type="password" name="apiKey" autocomplete="off" placeholder="${s.configured && !isOllama ? "••••••••" : provider === "openai" ? "sk-..." : "sk-ant-..."}" />
+        <p class="tagline" id="ai-ollama-cloud-note" ${provider === "ollama-cloud" ? "" : "hidden"}>
+          Mismo Ollama, pero corriendo en la nube de ollama.com en vez de la Pi — mucho más rápido. Necesita una API key propia de ollama.com/settings/keys (no la misma clave que usarías en local).
+        </p>
+        <div id="ai-apikey-field" ${isLocalOllama ? "hidden" : ""}>
+          <label>API key ${s.configured && !isLocalOllama ? "(ya configurada — deja en blanco para no cambiarla)" : ""}
+            <input type="password" name="apiKey" autocomplete="off" placeholder="${s.configured && !isLocalOllama ? "••••••••" : AI_PROVIDER_APIKEY_PLACEHOLDER[provider] || "sk-ant-..."}" />
           </label>
         </div>
         <label>Modelo
@@ -9197,12 +9207,22 @@
 
     const providerSelect = document.getElementById("ai-provider-select");
     const apiKeyField = document.getElementById("ai-apikey-field");
-    const ollamaNote = els.aiBody.querySelector(".ai-ollama-note");
+    const apiKeyInput = document.querySelector("#ai-settings-form [name=apiKey]");
+    const localNote = document.getElementById("ai-ollama-local-note");
+    const cloudNote = document.getElementById("ai-ollama-cloud-note");
     const modelInput = document.querySelector("#ai-settings-form [name=model]");
     providerSelect?.addEventListener("change", () => {
-      const nowOllama = providerSelect.value === "ollama";
-      if (apiKeyField) apiKeyField.hidden = nowOllama;
-      if (ollamaNote) ollamaNote.hidden = !nowOllama;
+      const nowLocal = providerSelect.value === "ollama";
+      const nowCloud = providerSelect.value === "ollama-cloud";
+      if (apiKeyField) apiKeyField.hidden = nowLocal;
+      if (localNote) localNote.hidden = !nowLocal;
+      if (cloudNote) cloudNote.hidden = !nowCloud;
+      // 21/08/2026 - el placeholder tambien depende del proveedor (distinto
+      // formato de key por proveedor) - antes solo se fijaba en el render
+      // inicial y se quedaba obsoleto al cambiar de proveedor sin guardar.
+      if (apiKeyInput && !(state.aiStatus?.configured && !nowLocal && state.aiStatus?.provider === providerSelect.value)) {
+        apiKeyInput.placeholder = AI_PROVIDER_APIKEY_PLACEHOLDER[providerSelect.value] || "sk-ant-...";
+      }
       if (modelInput && !modelInput.value) modelInput.value = AI_PROVIDER_DEFAULT_MODEL[providerSelect.value];
     });
 
