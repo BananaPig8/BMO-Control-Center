@@ -7527,9 +7527,12 @@
     }
   }
 
+  // 6.3.3 - 5 niveles (antes 3): info < notice < warning < error < critical.
+  const EVENT_LEVEL_EMOJI = { info: "🟢", notice: "🔵", warning: "🟠", error: "🔴", critical: "💀" };
+
   function eventLevelBadge(level) {
     const lvl = String(level || "info").toLowerCase();
-    const emoji = lvl === "critical" ? "🔴" : lvl === "warning" ? "🟡" : "🟢";
+    const emoji = EVENT_LEVEL_EMOJI[lvl] || "🟢";
     return `<span class="event-lvl ${escHtml(lvl)}">${emoji} ${escHtml(lvl)}</span>`;
   }
 
