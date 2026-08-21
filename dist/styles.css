@@ -4089,6 +4089,10 @@ button:not(:disabled):active, .dk-btn:not(:disabled):active {
   display: grid;
   gap: 2px;
 }
+/* 6.4.5 - plan de varios pasos heterogeneos (no solo escenas): cada paso
+   sin desglose propio se ve como una linea suelta, mismo tono que .ai-plan-steps. */
+.ai-plan { display: grid; gap: 6px; margin: 6px 0; }
+.ai-plan-step-label { margin: 0; font-size: 13px; color: var(--muted); }
 /* 6.1.18 - mensajes proactivos (sugerencias que BMO manda sin que se le
    pregunte): mismo estilo de burbuja bot, borde sutil para distinguirlos. */
 .ai-msg.bot.proactive { border-left: 3px solid var(--accent); }

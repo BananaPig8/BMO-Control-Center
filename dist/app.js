@@ -5499,12 +5499,14 @@
     if (!els.brainBody) return;
     els.brainBody.innerHTML = `<p class="tagline">Cargando…</p>`;
     try {
-      const [context, health, audit, daily, diskTrend] = await Promise.all([
+      const [context, health, audit, daily, diskTrend, memory, tasks] = await Promise.all([
         api("/api/system/context").catch(() => null),
         api("/api/health/manager").catch(() => null),
         api("/api/ai/audit?limit=5").catch(() => null),
         api("/api/system/daily-summary").catch(() => null),
         api("/api/system/disk-trend").catch(() => null),
+        api("/api/ai/memory").catch(() => null),
+        api("/api/ai/tasks").catch(() => null),
       ]);
 
       const overallMeta = health ? HEALTH_OVERALL_META[health.overallStatus] : null;
@@ -5536,6 +5538,17 @@
         ? `<p class="sic-sub">${diskTrend.available ? escHtml(diskTrend.message) : escHtml(diskTrend.reason)}</p>`
         : `<p class="sic-sub">Sin datos</p>`;
 
+      // 6.4.10 - BMO Assistant Dashboard: los tiles Tareas/Memoria del mockup
+      // del spec, aqui dentro de BMO Brain en vez de una pantalla aparte -
+      // ya existe el sitio natural para juntar todo esto (evita duplicar
+      // otro panel mas con el mismo espiritu).
+      const memoryHtml = memory
+        ? `<p class="sic-sub">🧠 ${memory.facts.length} dato(s) guardado(s)</p>`
+        : `<p class="sic-sub">Sin datos</p>`;
+      const tasksHtml = tasks && tasks.summary
+        ? `<p class="sic-sub">🟡 ${tasks.summary.pendientes} pendiente(s) · 🔴 ${tasks.summary.urgentes} urgente(s) · ⏰ ${tasks.summary.programadas} programada(s)</p>`
+        : `<p class="sic-sub">Sin datos</p>`;
+
       els.brainBody.innerHTML = [
         brainCard("🧭 Contexto", contextHtml),
         brainCard("🩺 Estado global", estadoHtml),
@@ -5543,7 +5556,24 @@
         brainCard("⚡ Últimas decisiones/acciones", auditRows),
         brainCard("📊 Hoy", dailyHtml),
         brainCard("📈 Tendencia de disco", trendHtml),
+        `<button type="button" class="plugin-card" style="margin-bottom:10px;width:100%;text-align:left;cursor:pointer" id="brain-open-memory">
+          <strong>🧠 Memoria</strong>
+          ${memoryHtml}
+        </button>`,
+        `<button type="button" class="plugin-card" style="margin-bottom:10px;width:100%;text-align:left;cursor:pointer" id="brain-open-tasks">
+          <strong>✅ Tareas</strong>
+          ${tasksHtml}
+        </button>`,
       ].join("");
+
+      document.getElementById("brain-open-memory")?.addEventListener("click", () => {
+        closeBrainPanel();
+        openAiPanel("memory").catch(() => {});
+      });
+      document.getElementById("brain-open-tasks")?.addEventListener("click", () => {
+        closeBrainPanel();
+        openAiPanel("tasks").catch(() => {});
+      });
     } catch (err) {
       els.brainBody.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
     }
@@ -9166,7 +9196,7 @@
   els.aiBack = document.getElementById("ai-back");
   els.aiSettingsBtn = document.getElementById("ai-settings-btn");
 
-  state.aiView = "chat"; // "chat" | "settings"
+  state.aiView = "chat"; // "chat" | "settings" | "history" | "audit" | "memory" | "tasks"
   state.aiStatus = null; // {provider, model, enabled, configured}
   state.aiLog = []; // [{role:"user"|"assistant", text, pending, pendingId, tool, params}]
   state.aiBusy = false;
@@ -9273,22 +9303,31 @@
     return `🤖 ${aiToolFriendlyName(e.tool)}`;
   }
 
+  // 6.4.5 - Planificador: antes esto SIEMPRE era una unica tool (o el plan
+  // real de una escena, o solo su nombre en crudo). Ahora "steps" es
+  // siempre un array (aunque sea de 1) - cada paso trae su propio "label"
+  // real (una escena trae ademas su propio desglose sceneName/steps), asi
+  // que una orden compuesta ("prepara todo para jugar") puede mostrar varios
+  // pasos heterogeneos juntos en una sola tarjeta, no fragmentados.
+  function aiStepHtml(step) {
+    if (step.sceneName) {
+      return `<div class="ai-plan-step">
+        <p class="tagline"><strong>${escHtml(step.sceneIcon || "")} ${escHtml(step.sceneName)}</strong></p>
+        <ol class="ai-plan-steps">${(step.steps || []).map((s) => `<li>${escHtml(s)}</li>`).join("")}</ol>
+      </div>`;
+    }
+    return `<p class="ai-plan-step-label">• ${escHtml(step.label || aiToolFriendlyName(step.tool))}</p>`;
+  }
+
   function aiMsgBubbleHtml(entry) {
     if (entry.pending) {
       const risk = AI_RISK_META[entry.riskTier] || AI_RISK_META.HIGH_RISK;
-      // 6.1.8 - Action Planner: si la tool va a ejecutar una escena
-      // (executeScene/executeAutomation), se muestra el PLAN REAL - los
-      // pasos guardados de esa escena - no solo el nombre de la tool.
-      const planHtml = entry.plan
-        ? `<div class="ai-plan">
-            <p class="tagline"><strong>${escHtml(entry.plan.sceneIcon || "")} ${escHtml(entry.plan.sceneName || "")}</strong></p>
-            <ol class="ai-plan-steps">${(entry.plan.steps || []).map((s) => `<li>${escHtml(s)}</li>`).join("")}</ol>
-          </div>`
-        : `<p class="tagline">${escHtml(JSON.stringify(entry.params || {}))}</p>`;
+      const steps = entry.steps || [];
+      const title = steps.length > 1 ? `Plan de ${steps.length} pasos` : aiToolFriendlyName(steps[0]?.tool);
       return `<div class="ai-msg bot">
         <div class="ai-confirm-card ai-confirm-${risk.cls}">
-          <p><strong>${risk.icon} ${risk.label}: ${escHtml(aiToolFriendlyName(entry.tool))}</strong></p>
-          ${planHtml}
+          <p><strong>${risk.icon} ${risk.label}: ${escHtml(title)}</strong></p>
+          <div class="ai-plan">${steps.map(aiStepHtml).join("")}</div>
           <div class="ai-confirm-actions">
             <button type="button" class="dk-btn ghost" data-ai-confirm="0" data-ai-pending="${escHtml(entry.pendingId)}">Cancelar</button>
             <button type="button" class="dk-btn" data-ai-confirm="1" data-ai-pending="${escHtml(entry.pendingId)}">Ejecutar</button>
@@ -9395,6 +9434,8 @@
       <div class="docker-actions" style="margin-top:12px">
         <button type="button" class="dk-btn ghost" id="ai-history-btn">📜 Ver historial</button>
         <button type="button" class="dk-btn ghost" id="ai-audit-btn">📋 Ver registro de auditoría</button>
+        <button type="button" class="dk-btn ghost" id="ai-memory-btn">🧠 Ver memoria</button>
+        <button type="button" class="dk-btn ghost" id="ai-tasks-btn">✅ Ver tareas</button>
       </div>`;
 
     document.getElementById("ai-history-btn")?.addEventListener("click", () => {
@@ -9403,6 +9444,14 @@
     });
     document.getElementById("ai-audit-btn")?.addEventListener("click", () => {
       state.aiView = "audit";
+      renderAiPanel();
+    });
+    document.getElementById("ai-memory-btn")?.addEventListener("click", () => {
+      state.aiView = "memory";
+      renderAiPanel();
+    });
+    document.getElementById("ai-tasks-btn")?.addEventListener("click", () => {
+      state.aiView = "tasks";
       renderAiPanel();
     });
 
@@ -9638,10 +9687,170 @@
     });
   }
 
+  // 6.4.2 - Memoria personal: pantalla de gestion (ademas de las tools
+  // saveMemory/getMemory/deleteMemory que usa la IA por chat) - "control
+  // explicito de que se guarda" tambien significa poder verlo/borrarlo a
+  // mano sin depender del chat.
+  const MEMORY_CATEGORY_LABEL = { usuario: "👤 Usuario", proyectos: "📁 Proyectos", rutinas: "🔁 Rutinas", eventos: "📌 Eventos" };
+
+  async function renderAiMemoryView() {
+    els.aiBody.innerHTML = `<p class="tagline">Cargando...</p>`;
+    let facts = [];
+    try {
+      const res = await api("/api/ai/memory");
+      facts = res.facts || [];
+    } catch (err) {
+      els.aiBody.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
+      return;
+    }
+    const rows = facts.length
+      ? facts
+          .slice()
+          .reverse()
+          .map(
+            (f) => `<div class="sys-list-row">
+              <span>${escHtml(MEMORY_CATEGORY_LABEL[f.category] || f.category)}: ${escHtml(f.text)}</span>
+              <button type="button" class="activity-more" data-memory-delete="${escHtml(f.id)}">Borrar</button>
+            </div>`
+          )
+          .join("")
+      : `<p class="tagline">Todavía no hay nada guardado. Pídeselo a BMO por chat ("recuerda que...") o añádelo aquí.</p>`;
+    els.aiBody.innerHTML = `
+      <div class="docker-actions">
+        <button type="button" class="dk-btn ghost" id="ai-memory-back">← Volver</button>
+      </div>
+      <form id="ai-memory-form" class="ai-settings-form" style="margin-top:10px">
+        <label>Categoría
+          <select name="category">
+            <option value="usuario">👤 Usuario</option>
+            <option value="proyectos">📁 Proyectos</option>
+            <option value="rutinas">🔁 Rutinas</option>
+            <option value="eventos">📌 Eventos</option>
+          </select>
+        </label>
+        <label>Dato a recordar
+          <input type="text" name="text" placeholder="p.ej. mi restaurante favorito es..." required />
+        </label>
+        <button type="submit" class="dk-btn">Guardar</button>
+      </form>
+      <div style="margin-top:10px">${rows}</div>`;
+    document.getElementById("ai-memory-back")?.addEventListener("click", () => {
+      state.aiView = "settings";
+      renderAiPanel();
+    });
+    document.getElementById("ai-memory-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try {
+        await api("/api/ai/memory", { method: "POST", body: JSON.stringify({ category: fd.get("category"), text: fd.get("text") }) });
+        renderAiMemoryView();
+      } catch (err) {
+        toast(err.message || "No se pudo guardar");
+      }
+    });
+    els.aiBody.querySelectorAll("[data-memory-delete]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/ai/memory/${encodeURIComponent(btn.getAttribute("data-memory-delete"))}`, { method: "DELETE" });
+          renderAiMemoryView();
+        } catch (err) {
+          toast(err.message || "No se pudo borrar");
+        }
+      });
+    });
+  }
+
+  // 6.4.6 - Tareas/recordatorios personales: pantalla de gestion (ademas de
+  // las tools createTask/listPersonalTasks/completeTask/deleteTask).
+  async function renderAiTasksView() {
+    els.aiBody.innerHTML = `<p class="tagline">Cargando...</p>`;
+    let tasks = [];
+    let summary = null;
+    try {
+      const res = await api("/api/ai/tasks");
+      tasks = res.tasks || [];
+      summary = res.summary;
+    } catch (err) {
+      els.aiBody.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
+      return;
+    }
+    const summaryHtml = summary
+      ? `<p class="tagline">🟡 ${summary.pendientes} pendiente(s) · 🔴 ${summary.urgentes} urgente(s) · ⏰ ${summary.programadas} programada(s) · 🟢 ${summary.completadas} completada(s)</p>`
+      : "";
+    const rows = tasks.length
+      ? tasks
+          .map((t) => {
+            const dueHtml = t.dueAt ? ` · ⏰ ${escHtml(fmtEventTime(t.dueAt))}` : "";
+            const urgentHtml = t.urgent ? " 🔴" : "";
+            const recurringHtml = t.recurring ? ` · 🔁 ${escHtml(t.recurring)}` : "";
+            const doneCls = t.status === "done" ? "style=\"opacity:.55\"" : "";
+            return `<div class="sys-list-row" ${doneCls}>
+              <span>${t.status === "done" ? "✅" : "⬜"} ${escHtml(t.text)}${urgentHtml}${dueHtml}${recurringHtml}</span>
+              <span>
+                <button type="button" class="activity-more" data-task-toggle="${escHtml(t.id)}" data-task-done="${t.status === "done" ? "1" : "0"}">${t.status === "done" ? "Reabrir" : "Completar"}</button>
+                <button type="button" class="activity-more" data-task-delete="${escHtml(t.id)}">Borrar</button>
+              </span>
+            </div>`;
+          })
+          .join("")
+      : `<p class="tagline">Sin tareas. Pídeselo a BMO por chat ("recuérdame...") o añádelo aquí.</p>`;
+    els.aiBody.innerHTML = `
+      <div class="docker-actions">
+        <button type="button" class="dk-btn ghost" id="ai-tasks-back">← Volver</button>
+      </div>
+      ${summaryHtml}
+      <form id="ai-task-form" class="ai-settings-form" style="margin-top:10px">
+        <label>Nueva tarea
+          <input type="text" name="text" placeholder="p.ej. revisar BMO" required />
+        </label>
+        <label class="ai-settings-check"><input type="checkbox" name="urgent" /> Urgente</label>
+        <button type="submit" class="dk-btn">Añadir</button>
+      </form>
+      <div style="margin-top:10px">${rows}</div>`;
+    document.getElementById("ai-tasks-back")?.addEventListener("click", () => {
+      state.aiView = "settings";
+      renderAiPanel();
+    });
+    document.getElementById("ai-task-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try {
+        await api("/api/ai/tasks", { method: "POST", body: JSON.stringify({ text: fd.get("text"), urgent: fd.get("urgent") === "on" }) });
+        renderAiTasksView();
+      } catch (err) {
+        toast(err.message || "No se pudo crear la tarea");
+      }
+    });
+    els.aiBody.querySelectorAll("[data-task-toggle]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-task-toggle");
+        const wasDone = btn.getAttribute("data-task-done") === "1";
+        try {
+          await api(`/api/ai/tasks/${encodeURIComponent(id)}/${wasDone ? "uncomplete" : "complete"}`, { method: "POST" });
+          renderAiTasksView();
+        } catch (err) {
+          toast(err.message || "Error");
+        }
+      });
+    });
+    els.aiBody.querySelectorAll("[data-task-delete]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/ai/tasks/${encodeURIComponent(btn.getAttribute("data-task-delete"))}`, { method: "DELETE" });
+          renderAiTasksView();
+        } catch (err) {
+          toast(err.message || "No se pudo borrar");
+        }
+      });
+    });
+  }
+
   function renderAiPanel() {
     if (!els.aiBody) return;
     if (state.aiView === "history") return renderAiHistoryView();
     if (state.aiView === "audit") return renderAiAuditView();
+    if (state.aiView === "memory") return renderAiMemoryView();
+    if (state.aiView === "tasks") return renderAiTasksView();
     if (state.aiView === "settings") return renderAiSettingsView();
     if (!state.aiStatus || !state.aiStatus.configured) return renderAiNotConfiguredView();
     return renderAiChatView();
@@ -9655,7 +9864,7 @@
     try {
       const outcome = await api("/api/ai/chat", { method: "POST", body: JSON.stringify({ message: text }) });
       if (outcome.type === "confirmation_required") {
-        state.aiLog.push({ pending: true, pendingId: outcome.pendingId, tool: outcome.tool, params: outcome.params, riskTier: outcome.riskTier, plan: outcome.plan });
+        state.aiLog.push({ pending: true, pendingId: outcome.pendingId, steps: outcome.steps, riskTier: outcome.highestRiskTier });
       } else {
         state.aiLog.push({ role: "assistant", text: outcome.text || "(sin respuesta)" });
       }
@@ -9674,7 +9883,7 @@
     try {
       const outcome = await api("/api/ai/confirm", { method: "POST", body: JSON.stringify({ pendingId, approve }) });
       if (outcome.type === "confirmation_required") {
-        state.aiLog.push({ pending: true, pendingId: outcome.pendingId, tool: outcome.tool, params: outcome.params, riskTier: outcome.riskTier, plan: outcome.plan });
+        state.aiLog.push({ pending: true, pendingId: outcome.pendingId, steps: outcome.steps, riskTier: outcome.highestRiskTier });
       } else {
         state.aiLog.push({ role: "assistant", text: outcome.text || (approve ? "Hecho." : "Cancelado.") });
       }
@@ -9686,14 +9895,14 @@
     }
   }
 
-  async function openAiPanel() {
+  async function openAiPanel(view) {
     if (!els.aiPanel || !els.aiBody) {
       toast("BMO AI no disponible — recarga la página");
       return;
     }
     closeSysHub();
     els.aiPanel.hidden = false;
-    state.aiView = "chat";
+    state.aiView = view || "chat";
     els.aiBody.innerHTML = `<p class="tagline">Cargando...</p>`;
     try {
       state.aiStatus = await api("/api/ai/status");
