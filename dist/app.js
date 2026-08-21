@@ -6881,7 +6881,11 @@
     sistema: {
       label: "Sistema",
       svg: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.4 5.4l1.7 1.7M16.9 16.9l1.7 1.7M18.6 5.4l-1.7 1.7M7.1 16.9l-1.7 1.7"/></svg>`,
-      badge: true,
+      // 21/08/2026 - usuario: "quitame el numero de notificaciones en el
+      // sistema ya que no me interesa" - badge quitado a proposito. El
+      // resto de la logica de unseenCount/notificaciones sigue intacta
+      // (Eventos, Alertas, el widget "Alertas sin ver" de Inicio), esto
+      // solo apaga el numerito sobre el icono de Sistema en la barra.
     },
     dispositivos: {
       label: "Dispositivos",
