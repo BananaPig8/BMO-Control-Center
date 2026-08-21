@@ -9221,6 +9221,11 @@
     { label: "🔔 Alertas", action: "alertas" },
   ];
 
+  // 6.4.8 - "¿Que ves?" SI pasa por el modelo (a diferencia de los tiles de
+  // arriba, que son atajos directos sin IA) - es justo lo que activa
+  // describeCameraView, no tiene sentido como atajo sin lenguaje natural.
+  const AI_VISION_PROMPT = "¿Qué ves ahora mismo por la cámara?";
+
   function handleAiQuickTile(action) {
     closeAiPanel();
     if (action === "estado-pc") {
@@ -9344,7 +9349,7 @@
     const isOllama = state.aiStatus && state.aiStatus.provider === "ollama";
     const quickHtml = AI_QUICK_TILES.map(
       (t) => `<button type="button" class="ai-quick-tile" data-ai-quick="${t.action}">${escHtml(t.label)}</button>`
-    ).join("");
+    ).join("") + `<button type="button" class="ai-quick-tile" data-ai-quick="vision">👁️ ¿Qué ves?</button>`;
     const logHtml = state.aiLog.length
       ? state.aiLog.map(aiMsgBubbleHtml).join("")
       : `<p class="tagline" style="padding:12px 0">¿Qué necesitas? Puedo consultar el estado del sistema o ejecutar escenas (con tu confirmación).</p>`;
@@ -9369,7 +9374,14 @@
       submitAiChat(text);
     });
     els.aiBody.querySelectorAll("[data-ai-quick]").forEach((btn) => {
-      btn.addEventListener("click", () => handleAiQuickTile(btn.getAttribute("data-ai-quick")));
+      btn.addEventListener("click", () => {
+        const action = btn.getAttribute("data-ai-quick");
+        // 6.4.8 - a diferencia del resto de tiles (atajos directos SIN IA),
+        // este SI pasa por el modelo - se queda en el panel de chat en vez
+        // de navegar fuera.
+        if (action === "vision") submitAiChat(AI_VISION_PROMPT);
+        else handleAiQuickTile(action);
+      });
     });
     els.aiBody.querySelectorAll("[data-ai-confirm]").forEach((btn) => {
       btn.addEventListener("click", () => {
