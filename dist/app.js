@@ -5413,6 +5413,37 @@
     }
   }
 
+  // 6.2.17 - checklist del ultimo arranque real (Docker->Core->Monitorización
+  // ->IA->Visión->UI->Salud->READY), no en vivo (para cuando se puede pedir,
+  // el arranque ya termino) - se pide una vez al abrir el panel, no en el
+  // intervalo de 10s de refreshHealth (no cambia mientras BMO sigue arriba).
+  async function renderBootSequence() {
+    const el = document.getElementById("boot-sequence-body");
+    if (!el) return;
+    try {
+      const data = await api("/api/system/boot-sequence");
+      const stages = data.stages || [];
+      if (!stages.length) {
+        el.innerHTML = "";
+        return;
+      }
+      const rows = stages
+        .map((s) => {
+          const dot = s.ok ? "✅" : "❌";
+          const elapsed = s.elapsedMs != null ? ` (+${(s.elapsedMs / 1000).toFixed(1)}s)` : "";
+          const detail = s.detail ? ` — ${escHtml(s.detail)}` : "";
+          return `<p class="sic-sub">${dot} ${escHtml(s.label)}${elapsed}${detail}</p>`;
+        })
+        .join("");
+      el.innerHTML = `<div class="plugin-card" style="margin-top:10px">
+        <strong>🚦 Último arranque</strong>
+        ${rows}
+      </div>`;
+    } catch {
+      el.innerHTML = "";
+    }
+  }
+
   async function openHealthPanel() {
     if (!els.healthPanel || !els.healthBody) {
       toast("Salud BMO no disponible");
@@ -5422,6 +5453,7 @@
     els.healthPanel.hidden = false;
     els.healthBody.innerHTML = `<p class="tagline">Cargando…</p>`;
     await refreshHealth();
+    renderBootSequence().catch(() => {});
     if (state.healthTimer) clearInterval(state.healthTimer);
     state.healthTimer = setInterval(() => refreshHealth().catch(() => {}), 10000);
   }
