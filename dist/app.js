@@ -5463,6 +5463,111 @@
     openSysHub();
   });
 
+  // —— BMO Brain 6.3.21/6.3.24 ——
+  // Junta en una sola pantalla lo que hasta ahora vivia repartido en varios
+  // paneles (Salud BMO, Eventos, Auditoria IA) mas lo nuevo de 6.3 que no
+  // tenia ningun sitio propio (Contexto, Resumen diario, Tendencia de
+  // disco) - no duplica datos, solo los reune.
+  els.brainPanel = document.getElementById("brain-panel");
+  els.brainBody = document.getElementById("brain-body");
+  els.brainBack = document.getElementById("brain-back");
+  els.brainRefresh = document.getElementById("brain-refresh");
+
+  function closeBrainPanel() {
+    if (els.brainPanel) els.brainPanel.hidden = true;
+  }
+
+  const CONTEXT_META = {
+    HOME: "🏠 Home",
+    GAMING: "🎮 Gaming",
+    WORK: "💼 Work",
+    LAN: "🌐 LAN",
+    NIGHT: "🌙 Night",
+    MAINTENANCE: "🛠️ Mantenimiento",
+    PRIVACY: "🔒 Privacidad",
+    AWAY: "🚪 Away",
+  };
+
+  function brainCard(title, bodyHtml) {
+    return `<div class="plugin-card" style="margin-bottom:10px">
+      <strong>${title}</strong>
+      ${bodyHtml}
+    </div>`;
+  }
+
+  async function renderBrainBody() {
+    if (!els.brainBody) return;
+    els.brainBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    try {
+      const [context, health, audit, daily, diskTrend] = await Promise.all([
+        api("/api/system/context").catch(() => null),
+        api("/api/health/manager").catch(() => null),
+        api("/api/ai/audit?limit=5").catch(() => null),
+        api("/api/system/daily-summary").catch(() => null),
+        api("/api/system/disk-trend").catch(() => null),
+      ]);
+
+      const overallMeta = health ? HEALTH_OVERALL_META[health.overallStatus] : null;
+      const aiItem = health?.items?.find((i) => i.key === "ai");
+
+      const contextHtml = context
+        ? `<p class="sic-sub">${escHtml(CONTEXT_META[context.current] || context.current)} · desde ${escHtml(fmtEventTime(context.since))} (${escHtml(context.setBy === "auto" ? "detectado automáticamente" : context.setBy === "ai" ? "cambiado por la IA" : "manual")})</p>`
+        : `<p class="sic-sub">Sin datos</p>`;
+
+      const estadoHtml = overallMeta
+        ? `<p class="sic-sub">${overallMeta.dot} ${escHtml(overallMeta.label)}</p>`
+        : `<p class="sic-sub">Sin datos</p>`;
+
+      const aiHtml = aiItem
+        ? `<p class="sic-sub">${aiItem.ok ? "🟢" : "🔴"} ${escHtml(aiItem.detail || "—")}</p>`
+        : `<p class="sic-sub">Sin datos</p>`;
+
+      const auditRows = (audit?.audit || [])
+        .slice(0, 5)
+        .map((e) => `<p class="sic-sub">${e.ok ? "✓" : "✗"} ${escHtml(aiEntryLabel(e))} · ${escHtml(formatHistoryWhen(e.at))}</p>`)
+        .join("") || `<p class="sic-sub">Sin acciones recientes</p>`;
+
+      const dailyHtml = daily && daily.date
+        ? `<p class="sic-sub">${daily.status === "critical" ? "🔴" : daily.status === "degraded" ? "🟠" : "🟢"} CPU ${daily.system?.cpuAvg ?? "—"}% · RAM ${daily.system?.ramAvg ?? "—"}% · Temp ${daily.system?.tempAvg ?? "—"}°C</p>
+           <p class="sic-sub">${daily.incidents ?? 0} incidencia(s) · ${daily.autoRecoveries ?? 0} recuperación(es) automática(s)${daily.uptimePercent != null ? ` · uptime ${daily.uptimePercent}%` : ""}</p>`
+        : `<p class="sic-sub">Todavía no hay resumen diario</p>`;
+
+      const trendHtml = diskTrend
+        ? `<p class="sic-sub">${diskTrend.available ? escHtml(diskTrend.message) : escHtml(diskTrend.reason)}</p>`
+        : `<p class="sic-sub">Sin datos</p>`;
+
+      els.brainBody.innerHTML = [
+        brainCard("🧭 Contexto", contextHtml),
+        brainCard("🩺 Estado global", estadoHtml),
+        brainCard("🤖 IA", aiHtml),
+        brainCard("⚡ Últimas decisiones/acciones", auditRows),
+        brainCard("📊 Hoy", dailyHtml),
+        brainCard("📈 Tendencia de disco", trendHtml),
+      ].join("");
+    } catch (err) {
+      els.brainBody.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
+    }
+  }
+
+  async function openBrainPanel() {
+    if (!els.brainPanel || !els.brainBody) {
+      toast("BMO Brain no disponible");
+      return;
+    }
+    closeSysHub();
+    els.brainPanel.hidden = false;
+    await renderBrainBody();
+  }
+
+  els.brainBack?.addEventListener("click", () => {
+    closeBrainPanel();
+    openSysHub();
+  });
+  els.brainRefresh?.addEventListener("click", () => renderBrainBody());
+  els.brainPanel?.addEventListener("click", (e) => {
+    if (e.target === els.brainPanel) closeBrainPanel();
+  });
+
   // —— Mantenimiento 4.10.11 ——
   els.maintenancePanel = document.getElementById("maintenance-panel");
   els.maintenanceBody = document.getElementById("maintenance-body");
@@ -8882,6 +8987,7 @@
     closePublicApiPanel();
     closeRecoveryPanel();
     closeSecurityCenterPanel();
+    closeBrainPanel();
     closeSteamPanel();
   }
 
@@ -12586,6 +12692,8 @@
       openRecoveryPanel().catch((err) => toast(err.message || "Error"));
     } else if (kind === "securitycenter") {
       openSecurityCenterPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "brain") {
+      openBrainPanel().catch((err) => toast(err.message || "Error"));
     }
   });
 
