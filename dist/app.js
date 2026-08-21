@@ -5392,11 +5392,22 @@
     });
   }
 
+  const HEALTH_OVERALL_META = {
+    HEALTHY: { dot: "🟢", label: "HEALTHY" },
+    DEGRADED: { dot: "🟡", label: "DEGRADED" },
+    CRITICAL: { dot: "🔴", label: "CRITICAL" },
+  };
+
   async function refreshHealth() {
     try {
       const data = await api("/api/health/manager");
       state.healthItems = data.items || [];
       renderHealthBody();
+      const badge = document.getElementById("health-overall-badge");
+      if (badge) {
+        const meta = HEALTH_OVERALL_META[data.overallStatus] || null;
+        badge.textContent = meta ? `${meta.dot} ${meta.label}` : "";
+      }
     } catch (err) {
       if (els.healthBody) els.healthBody.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
     }
@@ -5436,6 +5447,7 @@
       <p class="sic-sub">⬆️ Actualizaciones: ${escHtml(eff.actualizaciones || "—")}</p>
       <p class="sic-sub">💾 Backups: ${escHtml(eff.backups || "—")}</p>
       <p class="sic-sub">🔔 Alertas: ${escHtml(eff.alertas || "—")}</p>
+      <p class="sic-sub">♻️ Auto-recuperación: ${escHtml(eff.autorecuperacion || "—")}</p>
     </div>`;
   }
 
@@ -5492,6 +5504,7 @@
           actualizaciones: "Seguirán permitidas",
           backups: "Seguirán permitidos",
           alertas: "Se limitarán (solo CRITICAL sale de BMO)",
+          autorecuperacion: "Se desactivará (vigilancia sigue activa)",
         })}
         ${maintenanceResumeHtml(state.maintenanceResumeSteps)}
         <button type="button" class="dk-btn" id="maintenance-enter-btn">Entrar en modo mantenimiento</button>
