@@ -4062,6 +4062,21 @@ button:not(:disabled):active, .dk-btn:not(:disabled):active {
   gap: 8px;
   justify-content: flex-end;
 }
+/* 6.1.9 - Confirmation System de 3 niveles: MEDIUM=amarillo, HIGH_RISK/
+   DANGEROUS=rojo, para que se note la diferencia de un vistazo. */
+.ai-confirm-card.ai-confirm-warn { border-left: 4px solid var(--warn); padding-left: 10px; }
+.ai-confirm-card.ai-confirm-danger { border-left: 4px solid var(--danger); padding-left: 10px; }
+.ai-plan-steps {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--muted);
+  display: grid;
+  gap: 2px;
+}
+/* 6.1.18 - mensajes proactivos (sugerencias que BMO manda sin que se le
+   pregunte): mismo estilo de burbuja bot, borde sutil para distinguirlos. */
+.ai-msg.bot.proactive { border-left: 3px solid var(--accent); }
 
 .ai-chat-form {
   display: flex;

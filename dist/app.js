@@ -9013,11 +9013,18 @@
   state.aiLog = []; // [{role:"user"|"assistant", text, pending, pendingId, tool, params}]
   state.aiBusy = false;
 
+  // 6.1.11 - tiles rapidos ampliados: no todo tiene que pasar por lenguaje
+  // natural en una pantalla tactil pequena (mismo espiritu que el mockup
+  // del spec). Siguen siendo prompts de texto normales, no accesos directos
+  // a tools - la IA decide que hacer con cada uno igual que con cualquier
+  // mensaje escrito a mano.
   const AI_QUICK_PROMPTS = [
-    "¿Cómo está MI-PC?",
-    "¿Hay alguna alerta?",
     "Estado general del sistema",
-    "¿Por qué va lento MI-PC?",
+    "¿Cómo está MI-PC?",
+    "Prepárame para trabajar",
+    "Quiero jugar",
+    "Estado de Docker",
+    "¿Hay alguna alerta?",
   ];
 
   function closeAiPanel() {
@@ -9053,12 +9060,41 @@
     }
   });
 
+  // 6.1.6/6.1.9 - Confirmation System de 3 niveles reales: MEDIUM se ve
+  // amarillo/aviso, HIGH_RISK/DANGEROUS rojo/peligro - antes toda
+  // confirmacion se veia igual sin importar cuanto podia afectar.
+  const AI_RISK_META = {
+    MEDIUM: { cls: "warn", icon: "⚠️", label: "Confirmación" },
+    HIGH_RISK: { cls: "danger", icon: "🔴", label: "Acción de riesgo" },
+    DANGEROUS: { cls: "danger", icon: "🔴", label: "Acción peligrosa" },
+  };
+
+  function aiToolFriendlyName(tool) {
+    const names = {
+      executeScene: "Ejecutar escena",
+      executeAutomation: "Ejecutar automatización",
+      restartRecoverableService: "Reiniciar servicio",
+      activateProfile: "Aplicar perfil",
+    };
+    return names[tool] || tool;
+  }
+
   function aiMsgBubbleHtml(entry) {
     if (entry.pending) {
+      const risk = AI_RISK_META[entry.riskTier] || AI_RISK_META.HIGH_RISK;
+      // 6.1.8 - Action Planner: si la tool va a ejecutar una escena
+      // (executeScene/executeAutomation), se muestra el PLAN REAL - los
+      // pasos guardados de esa escena - no solo el nombre de la tool.
+      const planHtml = entry.plan
+        ? `<div class="ai-plan">
+            <p class="tagline"><strong>${escHtml(entry.plan.sceneIcon || "")} ${escHtml(entry.plan.sceneName || "")}</strong></p>
+            <ol class="ai-plan-steps">${(entry.plan.steps || []).map((s) => `<li>${escHtml(s)}</li>`).join("")}</ol>
+          </div>`
+        : `<p class="tagline">${escHtml(JSON.stringify(entry.params || {}))}</p>`;
       return `<div class="ai-msg bot">
-        <div class="ai-confirm-card">
-          <p><strong>Confirmación necesaria</strong></p>
-          <p class="tagline">${escHtml(entry.tool)} · ${escHtml(JSON.stringify(entry.params || {}))}</p>
+        <div class="ai-confirm-card ai-confirm-${risk.cls}">
+          <p><strong>${risk.icon} ${risk.label}: ${escHtml(aiToolFriendlyName(entry.tool))}</strong></p>
+          ${planHtml}
           <div class="ai-confirm-actions">
             <button type="button" class="dk-btn ghost" data-ai-confirm="0" data-ai-pending="${escHtml(entry.pendingId)}">Cancelar</button>
             <button type="button" class="dk-btn" data-ai-confirm="1" data-ai-pending="${escHtml(entry.pendingId)}">Ejecutar</button>
@@ -9067,7 +9103,8 @@
       </div>`;
     }
     const cls = entry.role === "user" ? "user" : "bot";
-    return `<div class="ai-msg ${cls}">${escHtml(entry.text || "")}</div>`;
+    const proactiveCls = entry.proactive ? " proactive" : "";
+    return `<div class="ai-msg ${cls}${proactiveCls}">${escHtml(entry.text || "")}</div>`;
   }
 
   function renderAiChatView() {
@@ -9118,25 +9155,27 @@
     });
   }
 
-  const AI_PROVIDER_DEFAULT_MODEL = { anthropic: "claude-sonnet-4-5-20250929", ollama: "qwen3:4b" };
+  const AI_PROVIDER_DEFAULT_MODEL = { anthropic: "claude-sonnet-4-5-20250929", ollama: "qwen3:4b", openai: "gpt-4o-mini" };
 
   function renderAiSettingsView() {
     const s = state.aiStatus || {};
-    const provider = s.provider === "ollama" ? "ollama" : "anthropic";
+    const provider = ["ollama", "openai"].includes(s.provider) ? s.provider : "anthropic";
+    const isOllama = provider === "ollama";
     els.aiBody.innerHTML = `
       <form id="ai-settings-form" class="ai-settings-form">
         <label>Proveedor
           <select name="provider" id="ai-provider-select">
             <option value="anthropic" ${provider === "anthropic" ? "selected" : ""}>Anthropic Claude (nube)</option>
+            <option value="openai" ${provider === "openai" ? "selected" : ""}>OpenAI (nube)</option>
             <option value="ollama" ${provider === "ollama" ? "selected" : ""}>Ollama (local, en este Pi)</option>
           </select>
         </label>
-        <p class="tagline ai-ollama-note" ${provider === "ollama" ? "" : "hidden"}>
+        <p class="tagline ai-ollama-note" ${isOllama ? "" : "hidden"}>
           Corre en la propia Raspberry Pi: gratis y sin API key, pero lento (varios minutos por respuesta con qwen3:4b en esta CPU).
         </p>
-        <div id="ai-apikey-field" ${provider === "ollama" ? "hidden" : ""}>
-          <label>API key ${s.configured && provider === "anthropic" ? "(ya configurada — deja en blanco para no cambiarla)" : ""}
-            <input type="password" name="apiKey" autocomplete="off" placeholder="${s.configured && provider === "anthropic" ? "••••••••" : "sk-ant-..."}" />
+        <div id="ai-apikey-field" ${isOllama ? "hidden" : ""}>
+          <label>API key ${s.configured && !isOllama ? "(ya configurada — deja en blanco para no cambiarla)" : ""}
+            <input type="password" name="apiKey" autocomplete="off" placeholder="${s.configured && !isOllama ? "••••••••" : provider === "openai" ? "sk-..." : "sk-ant-..."}" />
           </label>
         </div>
         <label>Modelo
@@ -9148,16 +9187,22 @@
         </label>
         <button type="submit" class="dk-btn">Guardar</button>
       </form>
-      ${aiPreferencesFormHtml()}`;
+      ${aiPreferencesFormHtml()}
+      <button type="button" class="dk-btn ghost" id="ai-audit-btn" style="margin-top:12px">📋 Ver registro de auditoría</button>`;
+
+    document.getElementById("ai-audit-btn")?.addEventListener("click", () => {
+      state.aiView = "audit";
+      renderAiPanel();
+    });
 
     const providerSelect = document.getElementById("ai-provider-select");
     const apiKeyField = document.getElementById("ai-apikey-field");
     const ollamaNote = els.aiBody.querySelector(".ai-ollama-note");
     const modelInput = document.querySelector("#ai-settings-form [name=model]");
     providerSelect?.addEventListener("change", () => {
-      const isOllama = providerSelect.value === "ollama";
-      if (apiKeyField) apiKeyField.hidden = isOllama;
-      if (ollamaNote) ollamaNote.hidden = !isOllama;
+      const nowOllama = providerSelect.value === "ollama";
+      if (apiKeyField) apiKeyField.hidden = nowOllama;
+      if (ollamaNote) ollamaNote.hidden = !nowOllama;
       if (modelInput && !modelInput.value) modelInput.value = AI_PROVIDER_DEFAULT_MODEL[providerSelect.value];
     });
 
@@ -9223,6 +9268,21 @@
             ${escHtml(meta.label)}
           </label>`;
         }
+        // 6.1.18 - "proactivity" es de valores cerrados (off/critical/
+        // recommendations), mejor un select que texto libre donde se
+        // podria escribir cualquier cosa.
+        if (key === "proactivity") {
+          const options = [
+            ["off", "Desactivada"],
+            ["critical", "Solo críticas"],
+            ["recommendations", "Críticas + recomendaciones"],
+          ];
+          return `<label>${escHtml(meta.label)}
+            <select name="${escHtml(key)}">
+              ${options.map(([v, l]) => `<option value="${v}" ${value === v ? "selected" : ""}>${l}</option>`).join("")}
+            </select>
+          </label>`;
+        }
         return `<label>${escHtml(meta.label)}
           <input type="text" name="${escHtml(key)}" value="${escHtml(value || "")}" placeholder="(sin fijar)" />
         </label>`;
@@ -9236,8 +9296,44 @@
     </form>`;
   }
 
+  // 6.1.13 - Audit Log: lista lo que la IA ha ejecutado de verdad (tool,
+  // parametros, si hizo falta confirmarlo, resultado), no el texto del
+  // chat (eso ya lo tiene el Historial). Se carga bajo demanda, no en cada
+  // apertura del panel de IA.
+  async function renderAiAuditView() {
+    els.aiBody.innerHTML = `<p class="tagline">Cargando...</p>`;
+    let audit = [];
+    try {
+      const res = await api("/api/ai/audit?limit=50");
+      audit = res.audit || [];
+    } catch (err) {
+      els.aiBody.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
+      return;
+    }
+    const rows = audit.length
+      ? audit
+          .map((e) => {
+            const icon = e.ok ? "✓" : "✗";
+            const risk = AI_RISK_META[e.riskTier] ? AI_RISK_META[e.riskTier].icon : "";
+            return `<div class="sys-list-row">
+              <span>${icon} ${risk} ${escHtml(aiToolFriendlyName(e.tool))}${e.confirmed ? " (confirmado)" : ""}</span>
+              <span class="sic-sub">${escHtml(formatHistoryWhen(e.at))} · ${escHtml(JSON.stringify(e.params || {}))}</span>
+            </div>`;
+          })
+          .join("")
+      : `<p class="tagline">Todavía no hay acciones registradas.</p>`;
+    els.aiBody.innerHTML = `
+      <button type="button" class="dk-btn ghost" id="ai-audit-back">← Volver</button>
+      <div style="margin-top:10px">${rows}</div>`;
+    document.getElementById("ai-audit-back")?.addEventListener("click", () => {
+      state.aiView = "settings";
+      renderAiPanel();
+    });
+  }
+
   function renderAiPanel() {
     if (!els.aiBody) return;
+    if (state.aiView === "audit") return renderAiAuditView();
     if (state.aiView === "settings") return renderAiSettingsView();
     if (!state.aiStatus || !state.aiStatus.configured) return renderAiNotConfiguredView();
     return renderAiChatView();
@@ -9251,7 +9347,7 @@
     try {
       const outcome = await api("/api/ai/chat", { method: "POST", body: JSON.stringify({ message: text }) });
       if (outcome.type === "confirmation_required") {
-        state.aiLog.push({ pending: true, pendingId: outcome.pendingId, tool: outcome.tool, params: outcome.params });
+        state.aiLog.push({ pending: true, pendingId: outcome.pendingId, tool: outcome.tool, params: outcome.params, riskTier: outcome.riskTier, plan: outcome.plan });
       } else {
         state.aiLog.push({ role: "assistant", text: outcome.text || "(sin respuesta)" });
       }
@@ -9270,7 +9366,7 @@
     try {
       const outcome = await api("/api/ai/confirm", { method: "POST", body: JSON.stringify({ pendingId, approve }) });
       if (outcome.type === "confirmation_required") {
-        state.aiLog.push({ pending: true, pendingId: outcome.pendingId, tool: outcome.tool, params: outcome.params });
+        state.aiLog.push({ pending: true, pendingId: outcome.pendingId, tool: outcome.tool, params: outcome.params, riskTier: outcome.riskTier, plan: outcome.plan });
       } else {
         state.aiLog.push({ role: "assistant", text: outcome.text || (approve ? "Hecho." : "Cancelado.") });
       }
