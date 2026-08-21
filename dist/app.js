@@ -9022,14 +9022,38 @@
   // del spec). Siguen siendo prompts de texto normales, no accesos directos
   // a tools - la IA decide que hacer con cada uno igual que con cualquier
   // mensaje escrito a mano.
-  const AI_QUICK_PROMPTS = [
-    "Estado general del sistema",
-    "¿Cómo está MI-PC?",
-    "Prepárame para trabajar",
-    "Quiero jugar",
-    "Estado de Docker",
-    "¿Hay alguna alerta?",
+  // 6.1.8/6.1.11 - "No todo tiene que pasar por la IA": los 6 tiles del
+  // mockup del spec son atajos reales a pantallas/acciones que YA existen
+  // (Dispositivos, perfiles, Docker, Rendimiento, Alertas) - no pasan por
+  // el modelo en absoluto, ni gastan una llamada ni esperan una respuesta.
+  // El cuadro de texto de abajo sigue siendo el sitio para preguntas
+  // abiertas de verdad.
+  const AI_QUICK_TILES = [
+    { label: "🖥️ Estado PC", action: "estado-pc" },
+    { label: "🧑‍💻 Trabajo", action: "perfil-trabajo" },
+    { label: "🎮 Gaming", action: "perfil-gaming" },
+    { label: "🐳 Docker", action: "docker" },
+    { label: "📊 Rendimiento", action: "rendimiento" },
+    { label: "🔔 Alertas", action: "alertas" },
   ];
+
+  function handleAiQuickTile(action) {
+    closeAiPanel();
+    if (action === "estado-pc") {
+      state.agentFocusId = "mi-pc";
+      openDevicesPanel();
+    } else if (action === "perfil-trabajo") {
+      runProfile("mi-pc", "trabajo");
+    } else if (action === "perfil-gaming") {
+      runProfile("mi-pc", "gaming");
+    } else if (action === "docker") {
+      openDockerPanel();
+    } else if (action === "rendimiento") {
+      openPerfPanel();
+    } else if (action === "alertas") {
+      openAlertsPanel();
+    }
+  }
 
   function closeAiPanel() {
     if (els.aiPanel) els.aiPanel.hidden = true;
@@ -9113,8 +9137,8 @@
 
   function renderAiChatView() {
     const isOllama = state.aiStatus && state.aiStatus.provider === "ollama";
-    const quickHtml = AI_QUICK_PROMPTS.map(
-      (q) => `<button type="button" class="ai-quick-tile" data-ai-quick="${escHtml(q)}">${escHtml(q)}</button>`
+    const quickHtml = AI_QUICK_TILES.map(
+      (t) => `<button type="button" class="ai-quick-tile" data-ai-quick="${t.action}">${escHtml(t.label)}</button>`
     ).join("");
     const logHtml = state.aiLog.length
       ? state.aiLog.map(aiMsgBubbleHtml).join("")
@@ -9140,7 +9164,7 @@
       submitAiChat(text);
     });
     els.aiBody.querySelectorAll("[data-ai-quick]").forEach((btn) => {
-      btn.addEventListener("click", () => submitAiChat(btn.getAttribute("data-ai-quick")));
+      btn.addEventListener("click", () => handleAiQuickTile(btn.getAttribute("data-ai-quick")));
     });
     els.aiBody.querySelectorAll("[data-ai-confirm]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -9202,8 +9226,15 @@
         <button type="submit" class="dk-btn">Guardar</button>
       </form>
       ${aiPreferencesFormHtml()}
-      <button type="button" class="dk-btn ghost" id="ai-audit-btn" style="margin-top:12px">📋 Ver registro de auditoría</button>`;
+      <div class="docker-actions" style="margin-top:12px">
+        <button type="button" class="dk-btn ghost" id="ai-history-btn">📜 Ver historial</button>
+        <button type="button" class="dk-btn ghost" id="ai-audit-btn">📋 Ver registro de auditoría</button>
+      </div>`;
 
+    document.getElementById("ai-history-btn")?.addEventListener("click", () => {
+      state.aiView = "history";
+      renderAiPanel();
+    });
     document.getElementById("ai-audit-btn")?.addEventListener("click", () => {
       state.aiView = "audit";
       renderAiPanel();
@@ -9355,8 +9386,95 @@
     });
   }
 
+  // 6.1.12 - dia legible ("Hoy"/"Ayer"/fecha) a partir de un ISO string,
+  // en la zona horaria local del navegador (misma que ya usa el resto de
+  // BMO para mostrar horas).
+  function aiHistoryDayLabel(iso) {
+    const d = new Date(iso);
+    const now = new Date();
+    const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86400000);
+    if (diffDays === 0) return "Hoy";
+    if (diffDays === 1) return "Ayer";
+    return d.toLocaleDateString("es-ES", { day: "numeric", month: "long", year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined });
+  }
+
+  // 6.1.12 - pantalla de historial agrupada por dia, la que el 4.12 dejo
+  // explicitamente pendiente ("falta la pantalla") - el endpoint ya
+  // existia y funcionaba, solo faltaba esta vista. Incluye "Borrar
+  // historial" (tambien pedido en el mockup del spec, no existia ningun
+  // borrado hasta ahora).
+  async function renderAiHistoryView() {
+    els.aiBody.innerHTML = `<p class="tagline">Cargando...</p>`;
+    let history = [];
+    try {
+      const res = await api("/api/ai/history?limit=200");
+      history = res.history || [];
+    } catch (err) {
+      els.aiBody.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
+      return;
+    }
+    let bodyHtml;
+    if (!history.length) {
+      bodyHtml = `<p class="tagline">Todavía no hay conversaciones guardadas.</p>`;
+    } else {
+      const groups = [];
+      let lastLabel = null;
+      for (const entry of [...history].reverse()) {
+        const label = aiHistoryDayLabel(entry.at);
+        if (label !== lastLabel) {
+          groups.push({ label, entries: [] });
+          lastLabel = label;
+        }
+        groups[groups.length - 1].entries.push(entry);
+      }
+      bodyHtml = groups
+        .map(
+          (g) => `
+        <h3 style="margin:14px 0 6px;font-size:13px;color:var(--muted)">${escHtml(g.label)}</h3>
+        ${g.entries
+          .map((e) => {
+            const who = e.role === "user" ? "Tú" : "BMO";
+            const icon = e.proactive ? "💡" : e.pending ? "⏳" : e.role === "user" ? "🗣️" : "🤖";
+            return `<div class="sys-list-row">
+              <span>${icon} ${escHtml(who)}: ${escHtml((e.text || "").slice(0, 140))}</span>
+              <span class="sic-sub">${escHtml(formatHistoryWhen(e.at))}</span>
+            </div>`;
+          })
+          .join("")}`
+        )
+        .join("");
+    }
+    els.aiBody.innerHTML = `
+      <div class="docker-actions">
+        <button type="button" class="dk-btn ghost" id="ai-history-back">← Volver</button>
+        <button type="button" class="dk-btn ghost danger" id="ai-history-clear">🗑️ Borrar historial</button>
+      </div>
+      <div style="margin-top:10px">${bodyHtml}</div>`;
+    document.getElementById("ai-history-back")?.addEventListener("click", () => {
+      state.aiView = "settings";
+      renderAiPanel();
+    });
+    document.getElementById("ai-history-clear")?.addEventListener("click", async () => {
+      const ok = await showConfirmModal({
+        title: "¿Borrar todo el historial de IA?",
+        message: "Se eliminarán todas las conversaciones guardadas. Esta acción no se puede deshacer.",
+        confirmLabel: "Borrar",
+      });
+      if (!ok) return;
+      try {
+        await api("/api/ai/history", { method: "DELETE" });
+        toast("Historial borrado");
+        renderAiHistoryView();
+      } catch (err) {
+        toast(err.message || "No se pudo borrar el historial");
+      }
+    });
+  }
+
   function renderAiPanel() {
     if (!els.aiBody) return;
+    if (state.aiView === "history") return renderAiHistoryView();
     if (state.aiView === "audit") return renderAiAuditView();
     if (state.aiView === "settings") return renderAiSettingsView();
     if (!state.aiStatus || !state.aiStatus.configured) return renderAiNotConfiguredView();
@@ -12065,6 +12183,19 @@
   };
   state.pluginSearch = state.pluginSearch || "";
   state.pluginCategory = state.pluginCategory || "all";
+  // 4.13.16 - "Destacados"/"Nuevos": vista aparte de la categoria (son ejes
+  // distintos - un plugin puede ser "destacado" en cualquier categoria).
+  // "featured" = official===true (senal real ya existente, 4.13.18) -
+  // hoy coincide con "Todos" porque los 4 plugins del catalogo son
+  // oficiales, se separara solo cuando exista alguno de comunidad.
+  // "new" no oculta nada, solo reordena por fecha real de instalacion
+  // (mtime del directorio instalado) en vez de por nombre.
+  state.pluginView = state.pluginView || "all";
+  const PLUGIN_VIEW_META = {
+    all: "Todos",
+    featured: "⭐ Destacados",
+    new: "🆕 Nuevos",
+  };
 
   function renderPluginsBody() {
     if (!els.pluginsBody) return;
@@ -12093,18 +12224,36 @@
     }
 
     const q = state.pluginSearch.trim().toLowerCase();
-    const list = all.filter((p) => {
+    let list = all.filter((p) => {
       if (state.pluginCategory !== "all" && p.category !== state.pluginCategory) return false;
+      if (state.pluginView === "featured" && !p.official) return false;
       if (q && !`${p.name} ${p.description || ""}`.toLowerCase().includes(q)) return false;
       return true;
     });
+    if (state.pluginView === "new") {
+      list = [...list].sort((a, b) => {
+        const da = a.installedAt ? Date.parse(a.installedAt) : 0;
+        const db = b.installedAt ? Date.parse(b.installedAt) : 0;
+        return db - da;
+      });
+    }
+
+    const viewTabsHtml = `<div class="plugin-view-tabs">${Object.entries(PLUGIN_VIEW_META)
+      .map(([v, label]) => `<button type="button" class="plugin-cat-chip${state.pluginView === v ? " active" : ""}" data-view="${v}">${label}</button>`)
+      .join("")}</div>`;
 
     if (!list.length) {
-      els.pluginsBody.innerHTML = `<p class="tagline">Sin resultados para este filtro.</p>`;
+      els.pluginsBody.innerHTML = viewTabsHtml + `<p class="tagline">Sin resultados para este filtro.</p>`;
+      els.pluginsBody.querySelectorAll("[data-view]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.pluginView = btn.dataset.view;
+          renderPluginsBody();
+        });
+      });
       return;
     }
 
-    els.pluginsBody.innerHTML = list
+    els.pluginsBody.innerHTML = viewTabsHtml + list
       .map((p) => {
         const installed = Boolean(p.installed);
         const enabled = Boolean(p.enabled);
@@ -12185,9 +12334,13 @@
           statusPills.push(`<span class="plugin-pill plugin-deps-pill">Deps: ${depBits}</span>`);
         }
 
+        const installedAtLine =
+          state.pluginView === "new" && p.installedAt
+            ? `<br><span class="plugin-installed-at">Instalado ${formatHistoryWhen(p.installedAt)}</span>`
+            : "";
         const meta = canUpdate
-          ? `<div class="plugin-card-meta">v${version}<br><span class="plugin-latest">→ ${latest}</span></div>`
-          : `<div class="plugin-card-meta">v${version}</div>`;
+          ? `<div class="plugin-card-meta">v${version}<br><span class="plugin-latest">→ ${latest}</span>${installedAtLine}</div>`
+          : `<div class="plugin-card-meta">v${version}${installedAtLine}</div>`;
 
         // 4.13.18 - distincion oficial vs comunidad: mismo patron visual que
         // ya se usaba para imagenes Docker oficiales (docker-badge official).
@@ -12215,6 +12368,12 @@
 
     els.pluginsBody.querySelectorAll("[data-act]").forEach((btn) => {
       btn.addEventListener("click", () => handlePluginAction(btn.dataset.act, btn.dataset.id));
+    });
+    els.pluginsBody.querySelectorAll("[data-view]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.pluginView = btn.dataset.view;
+        renderPluginsBody();
+      });
     });
   }
 

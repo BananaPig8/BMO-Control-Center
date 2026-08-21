@@ -2844,6 +2844,17 @@ main.content::-webkit-scrollbar {
   background: var(--tint-accent);
   color: var(--accent);
 }
+/* 4.13.16 - Destacados/Nuevos: mismo estilo de chip que las categorias,
+   fila propia justo encima de la lista de plugins. */
+.plugin-view-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.plugin-installed-at {
+  color: var(--muted);
+  font-size: 11px;
+}
 .docker-badge.warn {
   background: rgba(251, 191, 36, 0.18);
   color: #fbbf24;
