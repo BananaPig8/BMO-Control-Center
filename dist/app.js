@@ -9151,8 +9151,20 @@
       executeAutomation: "Ejecutar automatización",
       restartRecoverableService: "Reiniciar servicio",
       activateProfile: "Aplicar perfil",
+      setContext: "Cambiar contexto",
     };
     return names[tool] || tool;
+  }
+
+  // 6.3.9/6.3.22 - el Audit Log ahora tambien registra lo que disparan las
+  // automatizaciones (antes solo lo que pedia la IA por chat) - distinto
+  // icono de fuente para no confundir "esto lo decidio la IA" con "esto ya
+  // estaba pre-autorizado por ti al crear la automatizacion".
+  function aiEntryLabel(e) {
+    if (e.source === "automation") {
+      return `⚙️ Automatización: ${e.params?.automationName || e.params?.automationId || "?"}`;
+    }
+    return `🤖 ${aiToolFriendlyName(e.tool)}`;
   }
 
   function aiMsgBubbleHtml(entry) {
@@ -9419,7 +9431,7 @@
             const icon = e.ok ? "✓" : "✗";
             const risk = AI_RISK_META[e.riskTier] ? AI_RISK_META[e.riskTier].icon : "";
             return `<div class="sys-list-row">
-              <span>${icon} ${risk} ${escHtml(aiToolFriendlyName(e.tool))}${e.confirmed ? " (confirmado)" : ""}</span>
+              <span>${icon} ${risk} ${escHtml(aiEntryLabel(e))}${e.confirmed ? " (confirmado)" : ""}</span>
               <span class="sic-sub">${escHtml(formatHistoryWhen(e.at))} · ${escHtml(JSON.stringify(e.params || {}))}</span>
             </div>`;
           })
