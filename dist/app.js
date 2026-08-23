@@ -9408,6 +9408,40 @@
   };
   const AI_PROVIDER_APIKEY_PLACEHOLDER = { openai: "sk-...", "ollama-cloud": "clave de ollama.com/settings/keys" };
 
+  // 6.5.2 - Camara como disparador: APAGADO por defecto (opt-in real, no
+  // solo un texto que lo diga) - este bloque es el unico sitio para
+  // encenderlo/apagarlo. Vive en Ajustes de IA porque usa el mismo sistema
+  // de vision (6.4.8), no es un ajuste de camara aparte.
+  async function renderCameraTriggerBlock() {
+    const el = document.getElementById("camera-trigger-block");
+    if (!el) return;
+    let status;
+    try {
+      status = await api("/api/system/camera-trigger");
+    } catch (err) {
+      el.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
+      return;
+    }
+    el.innerHTML = `
+      <strong>👀 Cámara como disparador</strong>
+      <p class="tagline">Comprueba cada ${Math.round((status.pollMs || 90000) / 1000)}s si hay alguien delante de la cámara (usa el mismo modelo de visión) y genera un evento real que puedes usar en una automatización ("cuando la cámara detecte a alguien"). Se detiene solo en modo privacidad.</p>
+      <label class="ai-settings-check">
+        <input type="checkbox" id="camera-trigger-enabled" ${status.enabled ? "checked" : ""} />
+        Activada
+      </label>
+      ${status.lastCheckAt ? `<p class="sic-sub">Última comprobación: ${escHtml(formatHistoryWhen(status.lastCheckAt))} · ${status.lastDetected == null ? "sin resultado" : status.lastDetected ? "👀 detectada" : "sin nadie"}</p>` : ""}`;
+    document.getElementById("camera-trigger-enabled")?.addEventListener("change", async (e) => {
+      try {
+        await api("/api/system/camera-trigger", { method: "POST", body: JSON.stringify({ enabled: e.target.checked }) });
+        toast(e.target.checked ? "Activado" : "Desactivado");
+        renderCameraTriggerBlock();
+      } catch (err) {
+        toast(err.message || "Error");
+        e.target.checked = !e.target.checked;
+      }
+    });
+  }
+
   function renderAiSettingsView() {
     const s = state.aiStatus || {};
     const provider = ["ollama", "openai", "ollama-cloud"].includes(s.provider) ? s.provider : "anthropic";
@@ -9443,12 +9477,14 @@
         <button type="submit" class="dk-btn">Guardar</button>
       </form>
       ${aiPreferencesFormHtml()}
+      <div id="camera-trigger-block" class="plugin-card" style="margin-top:12px"><p class="tagline">Cargando…</p></div>
       <div class="docker-actions" style="margin-top:12px">
         <button type="button" class="dk-btn ghost" id="ai-history-btn">📜 Ver historial</button>
         <button type="button" class="dk-btn ghost" id="ai-audit-btn">📋 Ver registro de auditoría</button>
         <button type="button" class="dk-btn ghost" id="ai-memory-btn">🧠 Ver memoria</button>
         <button type="button" class="dk-btn ghost" id="ai-tasks-btn">✅ Ver tareas</button>
       </div>`;
+    renderCameraTriggerBlock();
 
     document.getElementById("ai-history-btn")?.addEventListener("click", () => {
       state.aiView = "history";
