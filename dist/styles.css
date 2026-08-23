@@ -4093,6 +4093,32 @@ button:not(:disabled):active, .dk-btn:not(:disabled):active {
    sin desglose propio se ve como una linea suelta, mismo tono que .ai-plan-steps. */
 .ai-plan { display: grid; gap: 6px; margin: 6px 0; }
 .ai-plan-step-label { margin: 0; font-size: 13px; color: var(--muted); }
+
+/* 6.5.5 - Workflow Builder: diagrama de flujo vertical (Trigger->Acciones->
+   Resultado), pensado para una pantalla estrecha (480px) - por eso vertical
+   y no un lienzo con nodos arrastrables. */
+.wf-flow { display: flex; flex-direction: column; align-items: stretch; margin-top: 10px; }
+.wf-box {
+  border: 1px solid rgba(61,169,255,0.25);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(0,0,0,0.18);
+  font-size: 14px;
+}
+.wf-box.wf-trigger { border-color: var(--accent); }
+.wf-box.wf-branch { border-color: var(--warn); background: rgba(255,176,32,0.08); }
+.wf-box.wf-result { border-color: #2ee59d; text-align: center; }
+.wf-box-detail { margin-top: 2px; font-size: 12px; color: var(--muted); }
+.wf-arrow { text-align: center; font-size: 18px; color: var(--muted); line-height: 1.4; }
+.wf-branch-block {
+  margin: 0 0 0 14px;
+  padding-left: 12px;
+  border-left: 2px dashed rgba(255,176,32,0.35);
+  display: flex;
+  flex-direction: column;
+}
+.wf-branch-label { font-size: 11px; font-weight: 700; color: var(--warn); letter-spacing: 0.04em; margin: 4px 0 2px; }
+.wf-empty { font-size: 12px; color: var(--muted); margin: 2px 0 2px 14px; }
 /* 6.1.18 - mensajes proactivos (sugerencias que BMO manda sin que se le
    pregunte): mismo estilo de burbuja bot, borde sutil para distinguirlos. */
 .ai-msg.bot.proactive { border-left: 3px solid var(--accent); }

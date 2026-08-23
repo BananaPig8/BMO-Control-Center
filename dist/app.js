@@ -10798,6 +10798,7 @@
         </div>
         <div class="docker-actions">
           <button type="button" class="dk-btn" data-scene-run="${escHtml(s.id)}">Ejecutar</button>
+          <button type="button" class="dk-btn ghost" data-scene-flow="${escHtml(s.id)}">🔀 Diagrama</button>
           <button type="button" class="dk-btn ghost" data-scene-edit="${escHtml(s.id)}">Editar</button>
           <button type="button" class="dk-btn ghost danger" data-scene-del="${escHtml(s.id)}">Eliminar</button>
         </div>
@@ -10815,6 +10816,9 @@
 
     els.scenesBody.querySelectorAll("[data-scene-run]").forEach((btn) => {
       btn.addEventListener("click", () => runSceneFromPanel(btn.getAttribute("data-scene-run")));
+    });
+    els.scenesBody.querySelectorAll("[data-scene-flow]").forEach((btn) => {
+      btn.addEventListener("click", () => openSceneFlowchartView(btn.getAttribute("data-scene-flow")));
     });
     els.scenesBody.querySelectorAll("[data-scene-edit]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -10845,6 +10849,20 @@
     const hh = String(d.getHours()).padStart(2, "0");
     const mm = String(d.getMinutes()).padStart(2, "0");
     return `${dd}/${mo} ${hh}:${mm}`;
+  }
+
+  function openSceneFlowchartView(sceneId) {
+    const scene = (state.scenes || []).find((s) => s.id === sceneId);
+    if (!scene || !els.scenesBody) return;
+    if (els.scenesTitle) els.scenesTitle.textContent = "Diagrama";
+    els.scenesBody.innerHTML = `
+      <button type="button" class="dk-btn ghost" id="scene-flow-back">← Volver</button>
+      <h3 style="margin:10px 0 4px">${escHtml(scene.icon || "✨")} ${escHtml(scene.name)}</h3>
+      ${renderWorkflowFlowchartHtml(null, scene)}`;
+    document.getElementById("scene-flow-back")?.addEventListener("click", () => {
+      if (els.scenesTitle) els.scenesTitle.textContent = "Escenas";
+      renderScenesBody();
+    });
   }
 
   async function openHistoryView() {
@@ -11360,6 +11378,20 @@
     if (c.type === "process_running") {
       return `${escHtml(c.deviceId)} · ${escHtml(c.processName)} ${c.running ? "abierto" : "cerrado"}`;
     }
+    // 6.5.5 - BUG REAL encontrado al construir el diagrama de flujo: estos
+    // dos tipos (event_fired de 4.13.8, context de 6.3.5) no tenian caso
+    // propio aqui - caian al fallback generico de metric_threshold de mas
+    // abajo, que asume deviceId/metric/operator/value y por tanto mostraba
+    // literalmente "undefined · undefined > undefined" para cualquier
+    // automatizacion con estas condiciones. Bug silencioso desde que se
+    // añadio "context" en 6.3, solo visible ahora al mostrar condiciones de
+    // forma mas prominente.
+    if (c.type === "event_fired") {
+      return `ocurre el evento "${escHtml(c.eventType)}"`;
+    }
+    if (c.type === "context") {
+      return `el contexto de BMO ${c.op === "neq" ? "deja de ser" : "pasa a ser"} ${escHtml(c.value)}`;
+    }
     const metricLabel = (METRIC_OPTIONS.find((m) => m.value === c.metric) || {}).label || c.metric;
     return `${escHtml(c.deviceId)} · ${metricLabel} ${c.operator === "gt" ? ">" : "<"} ${c.value}`;
   }
@@ -11368,6 +11400,84 @@
     const parts = (a.conditions || []).map(conditionSummary);
     const joiner = a.combinator === "OR" ? " O " : " Y ";
     return parts.join(joiner);
+  }
+
+  // 6.5.5 - Workflow Builder: diagrama de flujo REAL (no un editor de nodos
+  // arrastrables - en una pantalla de 480px de ancho eso seria peor que el
+  // formulario que ya existe, no mejor) - una vista de solo lectura que
+  // dibuja Trigger->Acciones(con ramas SI/NO reales)->Resultado en vertical,
+  // reutilizando actionSummary/conditionSummary/automationSummary tal cual
+  // ya las usa el resto del panel, para que el texto sea identico al que ya
+  // ve el usuario en las listas.
+  function workflowActionIcon(a) {
+    if (a.target === "docker") return "🐳";
+    if (a.target === "spotify") return "🎵";
+    if (a.target === "bmo") return "🤖";
+    if (a.target === "system") return "⏱️";
+    return "💻";
+  }
+
+  function workflowActionBoxHtml(a, depth) {
+    const indentStyle = depth > 0 ? ` style="margin-left:${depth * 14}px"` : "";
+    if (a.target === "system" && a.action === "if") {
+      const c = a.params?.condition || {};
+      const thenSteps = a.params?.then || [];
+      const elseSteps = a.params?.else || [];
+      return `<div class="wf-box wf-branch"${indentStyle}>🔀 <strong>¿${escHtml(conditionSummary(c))}?</strong></div>
+        <div class="wf-branch-block">
+          <div class="wf-branch-label">SÍ ↓</div>
+          ${thenSteps.length ? thenSteps.map((s) => workflowFlowStepHtml(s, depth + 1)).join("") : '<p class="wf-empty">(nada)</p>'}
+          ${
+            elseSteps.length
+              ? `<div class="wf-branch-label">NO ↓</div>${elseSteps.map((s) => workflowFlowStepHtml(s, depth + 1)).join("")}`
+              : ""
+          }
+        </div>`;
+    }
+    return `<div class="wf-box wf-action"${indentStyle}>${workflowActionIcon(a)} <strong>${escHtml(actionSummary(a))}</strong></div>`;
+  }
+
+  function workflowFlowStepHtml(a, depth) {
+    return workflowActionBoxHtml(a, depth) + '<div class="wf-arrow">↓</div>';
+  }
+
+  function renderWorkflowFlowchartHtml(automation, scene) {
+    const parts = [];
+    if (automation) {
+      parts.push(
+        `<div class="wf-box wf-trigger">⚡ <strong>TRIGGER</strong><div class="wf-box-detail">Cuando ${escHtml(automationSummary(automation))} (${automation.combinator === "OR" ? "cualquiera" : "todas"})</div></div>`
+      );
+    } else {
+      parts.push(`<div class="wf-box wf-trigger">👆 <strong>MANUAL</strong><div class="wf-box-detail">Se ejecuta al pulsar "Ejecutar"</div></div>`);
+    }
+    parts.push('<div class="wf-arrow">↓</div>');
+    const actions = (scene && scene.actions) || [];
+    if (!actions.length) {
+      parts.push('<p class="wf-empty">(sin acciones)</p>');
+    } else {
+      actions.forEach((a, i) => {
+        parts.push(workflowActionBoxHtml(a, 0));
+        if (i < actions.length - 1) parts.push('<div class="wf-arrow">↓</div>');
+      });
+    }
+    parts.push('<div class="wf-arrow">↓</div>');
+    parts.push('<div class="wf-box wf-result">🟢 <strong>RESULTADO</strong></div>');
+    return `<div class="wf-flow">${parts.join("")}</div>`;
+  }
+
+  function openAutomationFlowchartView(automationId) {
+    const automation = (state.automations || []).find((a) => a.id === automationId);
+    if (!automation || !els.automationsBody) return;
+    const scene = (state.automationScenes || []).find((s) => s.id === automation.sceneId);
+    if (els.automationsTitle) els.automationsTitle.textContent = "Diagrama";
+    els.automationsBody.innerHTML = `
+      <button type="button" class="dk-btn ghost" id="auto-flow-back">← Volver</button>
+      <h3 style="margin:10px 0 4px">${escHtml(automation.name)}</h3>
+      ${renderWorkflowFlowchartHtml(automation, scene)}`;
+    document.getElementById("auto-flow-back")?.addEventListener("click", () => {
+      if (els.automationsTitle) els.automationsTitle.textContent = "Automatizaciones";
+      renderAutomationsBody();
+    });
   }
 
   function newAutomationDraft() {
@@ -11412,6 +11522,7 @@
           <button type="button" class="dk-btn ghost" style="padding:6px 10px;flex-shrink:0" data-auto-fav="${escHtml(a.id)}" aria-label="Favorito">${isFavAuto ? "⭐" : "☆"}</button>
         </div>
         <div class="docker-actions">
+          <button type="button" class="dk-btn ghost" data-auto-flow="${escHtml(a.id)}">🔀 Diagrama</button>
           <button type="button" class="dk-btn ghost" data-auto-toggle="${escHtml(a.id)}">${a.enabled ? "Desactivar" : "Activar"}</button>
           <button type="button" class="dk-btn ghost danger" data-auto-del="${escHtml(a.id)}">Eliminar</button>
         </div>
@@ -11840,6 +11951,9 @@
         state.automationsView = "edit";
         renderAutomationsBody();
       });
+    });
+    els.automationsBody.querySelectorAll("[data-auto-flow]").forEach((btn) => {
+      btn.addEventListener("click", () => openAutomationFlowchartView(btn.getAttribute("data-auto-flow")));
     });
     els.automationsBody.querySelector("#automations-edit-back")?.addEventListener("click", () => {
       state.automationDraft = null;
