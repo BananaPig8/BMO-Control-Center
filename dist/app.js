@@ -10869,7 +10869,7 @@
             (h, idx) => `
       <button type="button" class="sys-list-row" data-history-idx="${idx}">
         <span>${escHtml(h.sceneIcon || "✨")} ${escHtml(h.sceneName)} <span class="sic-sub">${formatHistoryWhen(h.at)}</span></span>
-        <span class="sic-sub">${h.success ? "✓" : "⚠"} ${h.completed}/${h.total}</span>
+        <span class="sic-sub">${automationRunStatusEmoji(h)} ${h.completed}/${h.total}</span>
       </button>`
           )
           .join("")
@@ -10957,7 +10957,7 @@
         <span class="sic-sub">Falta el permiso "${escHtml(s.permission)}" en este dispositivo</span>
       </div>`;
     }
-    const icon = s.status === "cancelled" ? "⏹" : s.status === "timeout" ? "⏱" : s.ok ? "✓" : "✗";
+    const icon = s.status === "cancelled" ? "⏹" : s.status === "timeout" ? "⏱" : s.status === "skipped" ? "⏭️" : s.ok ? "✓" : s.recoveryFailed ? "🔴" : "✗";
     const row = `<div class="sys-list-row" ${indent}>
         <span>${icon} ${actionSummary(s)}</span>
         <span class="sic-sub">${escHtml(s.detail || "")}</span>
@@ -12041,6 +12041,11 @@
     const completed = h.completed ?? (h.steps || []).filter((s) => s.ok).length;
     if (total === 0) return "⚪";
     if (completed === total) return "🟢";
+    // 6.5.10 - un workflow parado a mitad por un fallo sin recuperar (ver
+    // sceneService.js) es distinto de un "parcial" organico (p.ej. un
+    // wait_until que expiro) - se marca en rojo, no en naranja, para que se
+    // note que necesita revision, no solo que "algo no llego".
+    if (h.stoppedEarly) return "🔴";
     if (completed > 0) return "🟠";
     return "🔴";
   }
