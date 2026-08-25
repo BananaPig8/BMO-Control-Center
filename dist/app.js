@@ -126,6 +126,8 @@
     agentProcesses: null,
     agentProfiles: null,
     agentTimer: null,
+    discoveryScan: null,
+    discoveryScanning: false,
     history: {
       "mi-pc": { cpu: [], ram: [], disk: [], extra: [] },
       bmo: { cpu: [], ram: [], disk: [], extra: [] },
@@ -5372,9 +5374,13 @@
   function renderHealthBody() {
     if (!els.healthBody) return;
     const list = state.healthItems || [];
-    els.healthBody.innerHTML = list.length
-      ? list.map(healthRowHtml).join("")
-      : `<p class="tagline">Sin datos.</p>`;
+    // 6.6.15 - Ecosystem Health: cuenta real de dispositivos, encima del
+    // rollup de subsistemas de siempre.
+    const dev = state.healthDevices;
+    const devicesRowHtml = dev
+      ? `<div class="sys-list-row"><span>🌐 Dispositivos</span><span class="docker-meta">${dev.online === dev.total ? "🟢" : dev.online === 0 ? "🔴" : "🟡"} ${dev.online}/${dev.total}</span></div>`
+      : "";
+    els.healthBody.innerHTML = devicesRowHtml + (list.length ? list.map(healthRowHtml).join("") : `<p class="tagline">Sin datos.</p>`);
     els.healthBody.querySelectorAll("[data-health-restart]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const container = btn.getAttribute("data-health-restart");
@@ -5402,6 +5408,7 @@
     try {
       const data = await api("/api/health/manager");
       state.healthItems = data.items || [];
+      state.healthDevices = data.devices || null;
       renderHealthBody();
       const badge = document.getElementById("health-overall-badge");
       if (badge) {
@@ -5473,8 +5480,35 @@
   els.brainBack = document.getElementById("brain-back");
   els.brainRefresh = document.getElementById("brain-refresh");
 
+  // 7.0.18 (KAN-122) - Real-Time Activity: los datos ya existian (Audit Log
+  // agent-tagged de 6.8), lo que faltaba era que la tarjeta se actualizara
+  // sola mientras el panel esta abierto, en vez de ser una foto fija que
+  // solo cambia si el usuario pulsa "actualizar". Solo refresca ESA
+  // tarjeta (no todo el panel, para no perder lo que el usuario este
+  // escribiendo en la busqueda global de al lado).
+  let brainActivityTimer = null;
+
+  async function refreshBrainActivity() {
+    const el = document.getElementById("brain-activity-feed");
+    if (!el) return;
+    try {
+      const audit = await api("/api/ai/audit?limit=5");
+      const rows = (audit?.audit || [])
+        .slice(0, 5)
+        .map((e) => `<p class="sic-sub">${e.ok ? "✓" : "✗"} ${escHtml(aiEntryLabel(e))} · ${escHtml(formatHistoryWhen(e.at))}</p>`)
+        .join("") || `<p class="sic-sub">Sin acciones recientes</p>`;
+      el.innerHTML = rows;
+    } catch {
+      /* siguiente ciclo lo reintenta, no hace falta romper la tarjeta por un fallo puntual */
+    }
+  }
+
   function closeBrainPanel() {
     if (els.brainPanel) els.brainPanel.hidden = true;
+    if (brainActivityTimer) {
+      clearInterval(brainActivityTimer);
+      brainActivityTimer = null;
+    }
   }
 
   const CONTEXT_META = {
@@ -5495,11 +5529,57 @@
     </div>`;
   }
 
+  // 7.0.16/7.0.17 (KAN-120/121) - Command Center: en vez de un panel nuevo
+  // que duplique el mismo espiritu, se extiende BMO Brain (ya es el sitio
+  // real donde esto vive, mismo criterio que 6.4.10 aplico con Memoria/
+  // Tareas) con identidad real (7.0.7), puntuacion de salud (7.0.22) y
+  // busqueda global real (7.0.20) - la primera pieza de BMO Brain que deja
+  // de ser solo lectura, con la que el usuario puede interactuar de verdad.
+  function healthScoreBar(pct) {
+    const v = pct == null ? 0 : pct;
+    const color = v >= 90 ? "#4caf50" : v >= 70 ? "#ffb300" : "#e53935";
+    return `<div style="background:var(--panel-2);border-radius:6px;height:8px;margin:4px 0;overflow:hidden">
+      <div style="background:${color};height:100%;width:${v}%"></div>
+    </div>`;
+  }
+
+  async function runBrainSearch() {
+    const input = document.getElementById("brain-search-input");
+    const resultsEl = document.getElementById("brain-search-results");
+    if (!input || !resultsEl) return;
+    const q = input.value.trim();
+    if (!q) {
+      resultsEl.innerHTML = "";
+      return;
+    }
+    resultsEl.innerHTML = `<p class="sic-sub">Buscando…</p>`;
+    try {
+      const r = await api(`/api/search?q=${encodeURIComponent(q)}`);
+      const groups = [
+        ["📟 Dispositivos", r.devices, (d) => d.name || d.id],
+        ["📚 Documentación", r.documents, (d) => d.label || d.docId],
+        ["📁 Proyectos", r.projects, (p) => p.name || p.id],
+        ["🧠 Memoria", r.memory, (m) => m.text || m.value || m.id],
+        ["📋 Eventos", r.events, (e) => e.title || e.type],
+      ];
+      const html = groups
+        .filter(([, items]) => items && items.length)
+        .map(
+          ([label, items, fmt]) =>
+            `<p class="sic-sub"><strong>${label}</strong>: ${items.map((i) => escHtml(String(fmt(i)))).join(" · ")}</p>`
+        )
+        .join("");
+      resultsEl.innerHTML = html || `<p class="sic-sub">Sin resultados</p>`;
+    } catch (err) {
+      resultsEl.innerHTML = `<p class="sic-sub">${escHtml(err.message || "Error")}</p>`;
+    }
+  }
+
   async function renderBrainBody() {
     if (!els.brainBody) return;
     els.brainBody.innerHTML = `<p class="tagline">Cargando…</p>`;
     try {
-      const [context, health, audit, daily, diskTrend, memory, tasks] = await Promise.all([
+      const [context, health, audit, daily, diskTrend, memory, tasks, identity, healthScore, devMode] = await Promise.all([
         api("/api/system/context").catch(() => null),
         api("/api/health/manager").catch(() => null),
         api("/api/ai/audit?limit=5").catch(() => null),
@@ -5507,6 +5587,9 @@
         api("/api/system/disk-trend").catch(() => null),
         api("/api/ai/memory").catch(() => null),
         api("/api/ai/tasks").catch(() => null),
+        api("/api/identity").catch(() => null),
+        api("/api/health-score").catch(() => null),
+        api("/api/dev-mode").catch(() => null),
       ]);
 
       const overallMeta = health ? HEALTH_OVERALL_META[health.overallStatus] : null;
@@ -5549,11 +5632,57 @@
         ? `<p class="sic-sub">🟡 ${tasks.summary.pendientes} pendiente(s) · 🔴 ${tasks.summary.urgentes} urgente(s) · ⏰ ${tasks.summary.programadas} programada(s)</p>`
         : `<p class="sic-sub">Sin datos</p>`;
 
+      // 7.0.7 - Identidad real de BMO (version/motor de IA/agentes/autonomia).
+      const identityHtml = identity
+        ? `<p class="sic-sub">${escHtml(identity.name)} · v${escHtml(identity.coreVersion)} · activo ${Math.round((identity.uptimeSeconds || 0) / 60)} min</p>
+           <p class="sic-sub">🤖 ${escHtml(identity.ai?.provider || "—")}/${escHtml(identity.ai?.model || "—")} · agentes ${identity.agents?.ready ?? "—"}/${identity.agents?.total ?? "—"} · autonomía ${escHtml(identity.autonomy?.mode || "—")}</p>`
+        : `<p class="sic-sub">Sin datos</p>`;
+
+      // 7.0.22 - Puntuacion de salud numerica, con barra por categoria.
+      const healthScoreHtml = healthScore
+        ? `<p class="sic-sub"><strong>${healthScore.total ?? "—"}/100</strong></p>
+           ${Object.entries(healthScore.categories || {})
+             .filter(([, v]) => v !== null)
+             .map(([k, v]) => `<p class="sic-sub" style="margin-bottom:2px">${escHtml(k)}: ${v}%</p>${healthScoreBar(v)}`)
+             .join("")}`
+        : `<p class="sic-sub">Sin datos</p>`;
+
+      const searchHtml = `
+        <div style="display:flex;gap:6px;margin-top:4px">
+          <input type="text" id="brain-search-input" placeholder="Buscar dispositivos, documentación, proyectos…"
+            style="flex:1;padding:8px;border-radius:8px;background:var(--panel-2);color:var(--fg);border:1px solid var(--border)" />
+          <button type="button" class="dk-btn" id="brain-search-btn">Buscar</button>
+        </div>
+        <div id="brain-search-results" style="margin-top:8px"></div>
+      `;
+
+      // 7.0.29 (KAN-133) - Developer Mode: toggle real persistido + accesos
+      // directos a los paneles de debug que ya existian por separado
+      // (Docker/Logs/Rendimiento/Monitor/Eventos), en vez de duplicar su
+      // logica en un panel nuevo.
+      const devModeHtml = `
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="brain-devmode-toggle" ${devMode?.enabled ? "checked" : ""} />
+          Modo desarrollador ${devMode?.enabled ? "activado" : "desactivado"}
+        </label>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+          <button type="button" class="dk-btn ghost" id="brain-dev-docker">🐳 Docker</button>
+          <button type="button" class="dk-btn ghost" id="brain-dev-logs">📄 Logs</button>
+          <button type="button" class="dk-btn ghost" id="brain-dev-perf">⚡ Rendimiento</button>
+          <button type="button" class="dk-btn ghost" id="brain-dev-monitor">📈 Monitor</button>
+          <button type="button" class="dk-btn ghost" id="brain-dev-events">📋 Eventos</button>
+        </div>
+      `;
+
       els.brainBody.innerHTML = [
+        brainCard("🔎 Búsqueda global", searchHtml),
+        brainCard("🆔 Identidad", identityHtml),
+        brainCard("💯 Puntuación de salud", healthScoreHtml),
+        brainCard("🛠️ Modo desarrollador", devModeHtml),
         brainCard("🧭 Contexto", contextHtml),
         brainCard("🩺 Estado global", estadoHtml),
         brainCard("🤖 IA", aiHtml),
-        brainCard("⚡ Últimas decisiones/acciones", auditRows),
+        brainCard("⚡ Actividad en vivo", `<div id="brain-activity-feed">${auditRows}</div>`),
         brainCard("📊 Hoy", dailyHtml),
         brainCard("📈 Tendencia de disco", trendHtml),
         `<button type="button" class="plugin-card" style="margin-bottom:10px;width:100%;text-align:left;cursor:pointer" id="brain-open-memory">
@@ -5574,6 +5703,39 @@
         closeBrainPanel();
         openAiPanel("tasks").catch(() => {});
       });
+      document.getElementById("brain-search-btn")?.addEventListener("click", () => runBrainSearch());
+      document.getElementById("brain-search-input")?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") runBrainSearch();
+      });
+      document.getElementById("brain-devmode-toggle")?.addEventListener("change", async (e) => {
+        try {
+          await api("/api/dev-mode", { method: "POST", body: JSON.stringify({ enabled: e.target.checked }) });
+          toast(e.target.checked ? "Modo desarrollador activado" : "Modo desarrollador desactivado");
+        } catch (err) {
+          toast(err.message || "Error");
+          e.target.checked = !e.target.checked;
+        }
+      });
+      document.getElementById("brain-dev-docker")?.addEventListener("click", () => {
+        closeBrainPanel();
+        openDockerPanel().catch(() => {});
+      });
+      document.getElementById("brain-dev-logs")?.addEventListener("click", () => {
+        closeBrainPanel();
+        openSysLogsPanel();
+      });
+      document.getElementById("brain-dev-perf")?.addEventListener("click", () => {
+        closeBrainPanel();
+        openPerfPanel().catch(() => {});
+      });
+      document.getElementById("brain-dev-monitor")?.addEventListener("click", () => {
+        closeBrainPanel();
+        openMonitorPanel().catch(() => {});
+      });
+      document.getElementById("brain-dev-events")?.addEventListener("click", () => {
+        closeBrainPanel();
+        openEventsPanel().catch(() => {});
+      });
     } catch (err) {
       els.brainBody.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
     }
@@ -5587,6 +5749,10 @@
     closeSysHub();
     els.brainPanel.hidden = false;
     await renderBrainBody();
+    // 7.0.18 - refresca solo la tarjeta de actividad cada 8s mientras el
+    // panel siga abierto (closeBrainPanel para el intervalo).
+    if (brainActivityTimer) clearInterval(brainActivityTimer);
+    brainActivityTimer = setInterval(refreshBrainActivity, 8000);
   }
 
   els.brainBack?.addEventListener("click", () => {
@@ -8242,6 +8408,9 @@
     }
     if (d.type === "android") return "📱";
     if (d.type === "linux-ssh") return "🐧";
+    if (d.type === "camera") return "📷";
+    if (d.type === "audio") return "🔊";
+    if (d.type === "generic") return "📦";
     if (d.type === "windows" || d.id === "mi-pc") return "🖥️";
     return "💻";
   }
@@ -8436,6 +8605,7 @@
       else if (r.action === "shutdown") text = "Apagado";
       else if (r.action === "reboot") text = "Reiniciado";
       else if (r.action === "sleep") text = "Suspendido";
+      else if (r.action === "lock") text = "Bloqueado";
       else if (r.action === "profile") {
         const opened = (r.opened || []).length;
         const closed = (r.closed || []).length;
@@ -8456,10 +8626,11 @@
     els.deviceHistoryPanel.hidden = false;
     els.deviceHistoryBody.innerHTML = `<p class="tagline">Cargando historial…</p>`;
     try {
-      const data = await api("/api/events/history?limit=200");
-      const events = (data.events || []).filter(
-        (e) => e.data && e.data.deviceId === deviceId && e.type.startsWith("device.")
-      );
+      // 6.6.14 - antes filtraba en el cliente sobre los últimos 200 eventos
+      // GLOBALES (un dispositivo poco ruidoso podía perder eventos viejos
+      // aunque BMO los tuviera guardados) - ahora el filtro es del backend.
+      const data = await api(`/api/events/history?limit=200&deviceId=${encodeURIComponent(deviceId)}`);
+      const events = data.events || [];
       if (!events.length) {
         els.deviceHistoryBody.innerHTML = `<p class="tagline">Sin actividad registrada todavía para ${escHtml(deviceName || deviceId)}.</p>`;
         return;
@@ -8482,6 +8653,70 @@
     } catch (err) {
       els.deviceHistoryBody.innerHTML = `<p class="tagline">${escHtml(err.message || "Error cargando historial")}</p>`;
     }
+  }
+
+  // 6.6.2 - Bloque de descubrimiento: escaneo manual bajo demanda (el
+  // barrido automático corre solo en el backend cada 5 min y avisa por
+  // Event Center; esto es para "quiero verlo ya" y decidir Añadir/Ignorar).
+  function discoveryBlockHtml() {
+    const scan = state.discoveryScan;
+    const unknown = scan ? scan.found.filter((f) => !f.known && !f.ignored) : [];
+    let resultsHtml = "";
+    if (state.discoveryScanning) {
+      resultsHtml = `<p class="tagline">Escaneando la red…</p>`;
+    } else if (scan) {
+      resultsHtml = unknown.length
+        ? unknown
+            .map(
+              (f) => `<div class="discovery-row">
+                <span>${escHtml(f.ip)}${f.mac ? ` <span class="meta">(${escHtml(f.mac)})</span>` : ""}</span>
+                <span class="discovery-row-actions">
+                  <button type="button" data-disc-add="${escHtml(f.ip)}" data-disc-mac="${escHtml(f.mac || "")}">➕ Añadir</button>
+                  <button type="button" data-disc-ignore="${escHtml(f.ip)}" data-disc-ignore-mac="${escHtml(f.mac || "")}">🚫 Ignorar</button>
+                </span>
+              </div>`
+            )
+            .join("")
+        : `<p class="tagline">${scan.count} dispositivos vistos en la red, todos ya conocidos o ignorados.</p>`;
+    }
+    return `<div class="perf-block devices-discovery">
+      <div class="discovery-head">
+        <h3>🔎 Buscar dispositivos en la red</h3>
+        <button type="button" id="discovery-scan-btn" ${state.discoveryScanning ? "disabled" : ""}>${state.discoveryScanning ? "Escaneando…" : "Escanear"}</button>
+      </div>
+      ${resultsHtml}
+    </div>`;
+  }
+
+  // 6.6.11 - Grupos de dispositivos: agrupaciones que el propio usuario crea
+  // (DESKTOP/GAMING/etc del spec son solo ejemplos, no algo que forcemos).
+  function groupsBlockHtml(devices) {
+    const groups = state.deviceGroups || [];
+    const groupsHtml = groups.length
+      ? groups
+          .map((g) => {
+            const names = g.deviceIds.map((id) => (devices.find((d) => d.id === id) || {}).name || id).join(", ");
+            return `<div class="discovery-row">
+              <span>${escHtml(g.icon || "🗂️")} <strong>${escHtml(g.name)}</strong> <span class="meta">${escHtml(names || "sin dispositivos")}</span></span>
+              <span class="discovery-row-actions">
+                <button type="button" data-group-delete="${escHtml(g.id)}">🗑️</button>
+              </span>
+            </div>`;
+          })
+          .join("")
+      : `<p class="tagline">Sin grupos todavía.</p>`;
+    const checklist = devices
+      .map((d) => `<label class="ai-settings-check"><input type="checkbox" data-group-device="${escHtml(d.id)}" /> ${escHtml(d.name || d.id)}</label>`)
+      .join("");
+    return `<div class="perf-block devices-groups">
+      <h3>🗂️ Grupos de dispositivos</h3>
+      ${groupsHtml}
+      <form id="group-create-form" style="margin-top:10px">
+        <input type="text" id="group-name-input" placeholder="Nombre del grupo (ej. GAMING)" style="width:100%;margin-bottom:8px" />
+        <div class="group-checklist">${checklist}</div>
+        <button type="submit" style="margin-top:8px">＋ Crear grupo</button>
+      </form>
+    </div>`;
   }
 
   function renderDevicesPanel() {
@@ -8511,7 +8746,11 @@
           <div class="sub">${
             d.type === "android"
               ? escHtml(`${d.os || "Android"}${d.osVersion ? " " + d.osVersion : ""} · ${d.model || "—"}`)
-              : `${escHtml(d.os || d.type || "")} · ${escHtml(d.ip || "—")}`
+              : d.type === "camera"
+                ? escHtml(d.privacyMode ? "Modo privacidad" : d.cameraTrigger && d.cameraTrigger.enabled ? "Disparador activo" : "En espera")
+                : d.type === "audio"
+                  ? escHtml(d.online ? "Altavoz ok · micro sin confirmar" : "Desconectado")
+                  : `${escHtml(d.os || d.type || "")} · ${escHtml(d.ip || "—")}`
           }</div></span>
           <span class="status-line">${healthDot(d.health)} <span class="dot ${dot}"></span><span>${status}</span>
             <button type="button" class="dev-fav-btn" data-dev-fav="${d.id}" data-fav="${d.favorite ? "1" : "0"}" aria-label="Favorito">${d.favorite ? "⭐" : "☆"}</button>
@@ -8525,6 +8764,34 @@
       detail = `<div class="perf-block devices-detail">
         <h3>${escHtml(focus.name)}</h3>
         <div class="meta">Placeholder — agente ${escHtml(focus.type)} aún no implementado.</div>
+      </div>`;
+    } else if (focus.type === "camera") {
+      // 6.6.7 - Camera Ecosystem: ficha de solo-estado, sin botones de
+      // energía/apps que no le aplican (no tiene agente propio).
+      const trig = focus.cameraTrigger || {};
+      detail = `<div class="perf-block devices-detail">
+        <h3>${escHtml(focus.name)}</h3>
+        <div class="devices-kv">
+          <div class="cell"><div class="label">Estado</div><div class="value">${focus.online ? "🟢 Conectada" : "🔴 No detectada"}</div></div>
+          <div class="cell"><div class="label">Privacidad</div><div class="value">${focus.privacyMode ? "🔴 Activa (cámara en pausa)" : "🟢 Desactivada"}</div></div>
+          <div class="cell"><div class="label">Disparador (visión)</div><div class="value">${trig.enabled ? "🟢 Activo" : "⚪ Apagado"}</div></div>
+          <div class="cell"><div class="label">Última comprobación</div><div class="value">${trig.lastCheckAt ? new Date(trig.lastCheckAt).toLocaleString("es-ES") : "—"}</div></div>
+        </div>
+        <p class="meta">La cámara no tiene acciones de energía propias — se gestiona desde Sistema → Inteligencia artificial (visión y disparador).</p>
+      </div>`;
+    } else if (focus.type === "audio") {
+      // 6.6.8 - ficha de solo-estado, honesta sobre lo que sí y no está
+      // confirmado (ver hardware_specs: altavoz sí, micrófono no todavía).
+      const speakerOk = focus.speaker && focus.speaker.status === "confirmado";
+      const micStatus = focus.mic && focus.mic.status;
+      detail = `<div class="perf-block devices-detail">
+        <h3>${escHtml(focus.name)}</h3>
+        <div class="devices-kv">
+          <div class="cell"><div class="label">Estado</div><div class="value">${focus.online ? "🟢 Conectado" : "🔴 No detectado"}</div></div>
+          <div class="cell"><div class="label">🔊 Altavoz</div><div class="value">${speakerOk ? "🟢 Confirmado" : "⚪ Desconectado"}</div></div>
+          <div class="cell"><div class="label">🎙️ Micrófono</div><div class="value">${micStatus === "sin_confirmar" ? "🟡 Sin confirmar" : "⚪ Desconectado"}</div></div>
+        </div>
+        <p class="meta">El altavoz se ha verificado hablando en voz alta de verdad. El micrófono está detectado a nivel de hardware pero nunca ha confirmado reconocer un comando real — no se da por funcional hasta que lo haga.</p>
       </div>`;
     } else if (focus.type === "android") {
       // 20/08/2026 - ficha propia para el móvil: solo presencia/batería
@@ -8637,8 +8904,20 @@
             <button type="button" class="danger" data-dev-power="shutdown" ${focus.online && perms.power ? "" : "disabled"}>Apagar</button>
             <button type="button" class="danger" data-dev-power="reboot" ${focus.online && perms.power ? "" : "disabled"}>Reiniciar</button>
             <button type="button" data-dev-power="sleep" ${focus.online && perms.power ? "" : "disabled"}>Suspender</button>
+            <button type="button" data-dev-power="lock" ${focus.online && perms.power ? "" : "disabled"}>Bloquear</button>
           </div>
         </div>
+        ${
+          focus.type === "windows"
+            ? `<div class="devices-actions-group">
+                <h4>🖥️ Monitores</h4>
+                <div class="devices-actions">
+                  <button type="button" data-dev-monitors="${escHtml(focus.id)}" ${focus.online && perms.monitors ? "" : "disabled"}>Ver monitores</button>
+                </div>
+                <div id="devices-monitors-result"></div>
+              </div>`
+            : ""
+        }
         <h3>Aplicaciones</h3>
         <div class="devices-apps">
           ${launcherAppsHtml(focus)}
@@ -8646,6 +8925,7 @@
         <h3>Permisos</h3>
         <div class="devices-perms">
           ${["metrics","power","apps","processes","wol"]
+            .concat(focus.type === "windows" ? ["monitors"] : [])
             .concat((focus.capabilities || {}).remote_access ? ["remote_access"] : [])
             .map((k) =>
               `<label><input type="checkbox" data-perm="${k}" ${perms[k] ? "checked" : ""}/> ${k}</label>`
@@ -8671,7 +8951,7 @@
       </div>`;
     }
 
-    els.devicesBody.innerHTML = `<div class="devices-list">${listHtml}</div>${detail}`;
+    els.devicesBody.innerHTML = `${discoveryBlockHtml()}${groupsBlockHtml(devices)}<div class="devices-list">${listHtml}</div>${detail}`;
 
     els.devicesBody.querySelectorAll("[data-agent-device]").forEach((btn) => {
       btn.addEventListener("click", (e) => {
@@ -8700,6 +8980,101 @@
       btn.addEventListener("click", () => {
         const action = btn.getAttribute("data-dev-power");
         runPowerAction(focus.id, action);
+      });
+    });
+    // 6.6.5 - Monitor Management: solo lectura por ahora (resolucion/Hz
+    // reales por monitor) - a proposito NO se construyo cambio de
+    // resolucion/orientacion en vivo, es justo lo que el propio spec
+    // marcaba como "later" y arriesga dejar la pantalla inutilizable si
+    // algo sale mal.
+    els.devicesBody.querySelector("[data-dev-monitors]")?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const id = btn.getAttribute("data-dev-monitors");
+      const out = document.getElementById("devices-monitors-result");
+      if (out) out.innerHTML = `<p class="tagline">Consultando…</p>`;
+      try {
+        const res = await api(`/api/devices/${id}/monitors`);
+        const monitors = res.monitors || [];
+        if (out) {
+          out.innerHTML = monitors.length
+            ? monitors
+                .map(
+                  (m) =>
+                    `<div class="sys-list-row"><span>${m.primary ? "⭐ " : ""}${escHtml(m.monitor || m.name)}</span><span class="docker-meta">${m.width}×${m.height} · ${m.refreshHz}Hz</span></div>`
+                )
+                .join("")
+            : `<p class="tagline">Sin monitores detectados.</p>`;
+        }
+      } catch (err) {
+        if (out) out.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
+      }
+    });
+    els.devicesBody.querySelector("#discovery-scan-btn")?.addEventListener("click", async () => {
+      state.discoveryScanning = true;
+      renderDevicesPanel();
+      try {
+        state.discoveryScan = await api("/api/devices/discover", { method: "POST", body: "{}" });
+      } catch (err) {
+        toast(err.message || "No se pudo escanear la red");
+      } finally {
+        state.discoveryScanning = false;
+        renderDevicesPanel();
+      }
+    });
+    els.devicesBody.querySelectorAll("[data-disc-add]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const ip = btn.getAttribute("data-disc-add");
+        const mac = btn.getAttribute("data-disc-mac") || null;
+        const name = window.prompt(`Nombre para el dispositivo en ${ip}:`, "");
+        if (!name) return;
+        try {
+          await api("/api/devices/discover/add", { method: "POST", body: JSON.stringify({ ip, mac, name }) });
+          toast(`${name} añadido`);
+          // 20s de cache en el barrido del backend - actualizamos la vista
+          // local en vez de re-pedir el escaneo (saldría el resultado viejo).
+          if (state.discoveryScan) state.discoveryScan.found = state.discoveryScan.found.filter((f) => f.ip !== ip);
+          await refreshDevicesPanel();
+        } catch (err) {
+          toast(err.message || "No se pudo añadir");
+        }
+      });
+    });
+    els.devicesBody.querySelector("#group-create-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const nameInput = els.devicesBody.querySelector("#group-name-input");
+      const name = (nameInput && nameInput.value || "").trim();
+      if (!name) return;
+      const deviceIds = Array.from(els.devicesBody.querySelectorAll("[data-group-device]:checked")).map((el) => el.getAttribute("data-group-device"));
+      try {
+        await api("/api/devices/groups", { method: "POST", body: JSON.stringify({ name, deviceIds }) });
+        toast(`Grupo "${name}" creado`);
+        await refreshDevicesPanel();
+      } catch (err) {
+        toast(err.message || "No se pudo crear el grupo");
+      }
+    });
+    els.devicesBody.querySelectorAll("[data-group-delete]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-group-delete");
+        try {
+          await api(`/api/devices/groups/${id}`, { method: "DELETE" });
+          await refreshDevicesPanel();
+        } catch (err) {
+          toast(err.message || "No se pudo borrar el grupo");
+        }
+      });
+    });
+    els.devicesBody.querySelectorAll("[data-disc-ignore]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const ip = btn.getAttribute("data-disc-ignore");
+        const mac = btn.getAttribute("data-disc-ignore-mac") || null;
+        try {
+          await api("/api/devices/discover/ignore", { method: "POST", body: JSON.stringify({ ip, mac }) });
+          if (state.discoveryScan) state.discoveryScan.found = state.discoveryScan.found.filter((f) => f.ip !== ip);
+          renderDevicesPanel();
+        } catch (err) {
+          toast(err.message || "No se pudo ignorar");
+        }
       });
     });
     els.devicesBody.querySelector("[data-estado-save]")?.addEventListener("click", () => {
@@ -8797,6 +9172,7 @@
     shutdown: { title: "¿Apagar MI-PC?", msg: "El equipo se apagará inmediatamente.", verb: "Apagar" },
     reboot: { title: "¿Reiniciar MI-PC?", msg: "El equipo se reiniciará inmediatamente.", verb: "Reiniciar" },
     sleep: { title: "¿Suspender MI-PC?", msg: "El equipo entrará en suspensión.", verb: "Suspender" },
+    lock: { title: "¿Bloquear MI-PC?", msg: "Se bloqueará la sesión inmediatamente.", verb: "Bloquear" },
   };
 
   // 4.16.9 - Modal de confirmacion compacto y reutilizable (ya existia,
@@ -8915,7 +9291,7 @@
     state.remoteWorkTimer = setInterval(async () => {
       let task;
       try {
-        task = await api(`/api/tasks/${taskId}`);
+        ({ task } = await api(`/api/tasks/${taskId}`));
       } catch {
         return; // sondeo transitorio, se reintenta en el siguiente tick
       }
@@ -8929,12 +9305,14 @@
   }
 
   async function refreshDevicesPanel() {
-    const [list, profiles] = await Promise.all([
+    const [list, profiles, groups] = await Promise.all([
       api("/api/devices"),
       api("/api/devices/profiles").catch(() => ({ profiles: {} })),
+      api("/api/devices/groups").catch(() => ({ groups: [] })),
     ]);
     state.agentDevices = list;
     state.agentProfiles = profiles;
+    state.deviceGroups = groups.groups || [];
     const focusId = state.agentFocusId || "mi-pc";
     if (focusId === "mi-pc" || (list.devices || []).some((d) => d.id === focusId && !d.stub && d.type === "windows")) {
       state.agentProcesses = await api(`/api/devices/${focusId}/processes`).catch(() => ({
@@ -9286,6 +9664,25 @@
     DANGEROUS: { cls: "danger", icon: "🔴", label: "Acción peligrosa" },
   };
 
+  // 6.8.3 - mismos iconos que agentRegistry.js en el backend (AGENT_META) -
+  // duplicado a proposito, es solo presentacion, no logica.
+  const AGENT_ICON = {
+    system: "🖥️",
+    vision: "👁️",
+    voice: "🎙️",
+    knowledge: "📚",
+    automation: "⚙️",
+    security: "🛡️",
+    assistant: "🤖",
+    coding: "💻",
+    unassigned: "❓",
+  };
+  const AGENT_STATUS_META = {
+    READY: { icon: "🟢", label: "Listo" },
+    OFFLINE: { icon: "🔴", label: "Sin conexión" },
+    PARKED: { icon: "🟡", label: "Aparcado" },
+  };
+
   function aiToolFriendlyName(tool) {
     const names = {
       executeScene: "Ejecutar escena",
@@ -9474,6 +9871,11 @@
           <input type="checkbox" name="enabled" ${s.enabled !== false ? "checked" : ""} />
           Activada
         </label>
+        <label class="ai-settings-check">
+          <input type="checkbox" name="multiAgentEnabled" ${s.multiAgentEnabled ? "checked" : ""} />
+          Arquitectura multi-agente (llamadas separadas por agente — más coste y latencia por turno)
+        </label>
+        <p class="tagline">Desactivada por defecto: un único agente responde cada turno (más barato y rápido). Activarla reparte la pregunta entre varios agentes en paralelo y combina sus respuestas — solo tiene sentido si de verdad quieres probar ese modo, tiene un coste real por turno.</p>
         <button type="submit" class="dk-btn">Guardar</button>
       </form>
       ${aiPreferencesFormHtml()}
@@ -9483,6 +9885,8 @@
         <button type="button" class="dk-btn ghost" id="ai-audit-btn">📋 Ver registro de auditoría</button>
         <button type="button" class="dk-btn ghost" id="ai-memory-btn">🧠 Ver memoria</button>
         <button type="button" class="dk-btn ghost" id="ai-tasks-btn">✅ Ver tareas</button>
+        <button type="button" class="dk-btn ghost" id="ai-knowledge-btn">📚 Conocimiento</button>
+        <button type="button" class="dk-btn ghost" id="ai-agents-btn">🤖 BMO AI Center</button>
       </div>`;
     renderCameraTriggerBlock();
 
@@ -9500,6 +9904,14 @@
     });
     document.getElementById("ai-tasks-btn")?.addEventListener("click", () => {
       state.aiView = "tasks";
+      renderAiPanel();
+    });
+    document.getElementById("ai-knowledge-btn")?.addEventListener("click", () => {
+      state.aiView = "knowledge";
+      renderAiPanel();
+    });
+    document.getElementById("ai-agents-btn")?.addEventListener("click", () => {
+      state.aiView = "agents";
       renderAiPanel();
     });
 
@@ -9535,6 +9947,7 @@
             apiKey: fd.get("apiKey") || undefined,
             model: fd.get("model"),
             enabled: fd.get("enabled") === "on",
+            multiAgentEnabled: fd.get("multiAgentEnabled") === "on",
           }),
         });
         toast("Ajustes de IA guardados");
@@ -9633,9 +10046,12 @@
           .map((e) => {
             const icon = e.ok ? "✓" : "✗";
             const risk = AI_RISK_META[e.riskTier] ? AI_RISK_META[e.riskTier].icon : "";
+            // 6.8.19 - Agent Audit Log: mismo registro de siempre, ahora con
+            // el agente al que pertenece cada tool (ver agentRegistry.js).
+            const agentIcon = AGENT_ICON[e.agent] || "";
             return `<div class="sys-list-row">
               <span>${icon} ${risk} ${escHtml(aiEntryLabel(e))}${e.confirmed ? " (confirmado)" : ""}</span>
-              <span class="sic-sub">${escHtml(formatHistoryWhen(e.at))} · ${escHtml(JSON.stringify(e.params || {}))}</span>
+              <span class="sic-sub">${agentIcon} ${escHtml(e.agent || "")} · ${escHtml(formatHistoryWhen(e.at))} · ${escHtml(JSON.stringify(e.params || {}))}</span>
             </div>`;
           })
           .join("")
@@ -9739,30 +10155,370 @@
   // saveMemory/getMemory/deleteMemory que usa la IA por chat) - "control
   // explicito de que se guarda" tambien significa poder verlo/borrarlo a
   // mano sin depender del chat.
-  const MEMORY_CATEGORY_LABEL = { usuario: "👤 Usuario", proyectos: "📁 Proyectos", rutinas: "🔁 Rutinas", eventos: "📌 Eventos" };
+  const MEMORY_CATEGORY_LABEL = { usuario: "👤 Usuario", proyectos: "📁 Proyectos", rutinas: "🔁 Rutinas", eventos: "📌 Eventos", tecnico: "💻 Técnico", configuracion: "🔧 Configuración" };
+
+  // 6.7.16/6.7.17/6.7.18 - Knowledge Dashboard + Memory/Project Explorer +
+  // Backup, en una sola vista (mismo hueco de la app que memoria/tareas).
+  // 6.7.6 - Knowledge Graph: iconos + etiqueta en castellano por tipo de
+  // relacion real (ver knowledgeGraphService.js - proyecto->tecnologia,
+  // dispositivo->grupo, escena->dispositivo, automatizacion->escena).
+  const GRAPH_RELATION_LABEL = {
+    usa: "📁 Proyectos y sus tecnologías",
+    "pertenece a": "🗂️ Dispositivos y sus grupos",
+    controla: "🎬 Escenas y sus dispositivos",
+    ejecuta: "🤖 Automatizaciones y sus escenas",
+  };
+
+  async function renderAiKnowledgeView() {
+    els.aiBody.innerHTML = `<p class="tagline">Cargando...</p>`;
+    let dash, projects, documents, graph;
+    try {
+      [dash, projects, documents, graph] = await Promise.all([
+        api("/api/ai/knowledge/dashboard"),
+        api("/api/ai/projects").then((r) => r.projects || []),
+        api("/api/ai/knowledge/documents").then((r) => r.documents || []),
+        api("/api/ai/knowledge/graph"),
+      ]);
+    } catch (err) {
+      els.aiBody.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
+      return;
+    }
+    // 6.7.6 - agrupa las aristas reales por tipo de relacion, cada grupo
+    // se renderiza como una lista legible "A → B" (mismo patron visual
+    // que sys-list-row en vez de un diagrama con layout propio - honesto
+    // con lo estrecha que es la pantalla del kiosco, 480px).
+    const nodesById = Object.fromEntries((graph.nodes || []).map((n) => [n.id, n]));
+    const edgesByRelation = {};
+    for (const e of graph.edges || []) {
+      (edgesByRelation[e.relation] ||= []).push(e);
+    }
+    const graphGroups = Object.keys(edgesByRelation).length
+      ? Object.entries(edgesByRelation)
+          .map(
+            ([relation, edges]) => `
+            <h4 style="margin:10px 0 4px;font-size:13px">${escHtml(GRAPH_RELATION_LABEL[relation] || relation)}</h4>
+            ${edges
+              .map((e) => {
+                const from = nodesById[e.from];
+                const to = nodesById[e.to];
+                return `<div class="sys-list-row"><span>${escHtml(from ? from.label : e.from)} → ${escHtml(to ? to.label : e.to)}</span></div>`;
+              })
+              .join("")}`
+          )
+          .join("")
+      : `<p class="tagline">Sin relaciones todavía — crea proyectos con tecnologías, grupos de dispositivos, o escenas/automatizaciones para verlas aquí.</p>`;
+    const filledCount = (p) => Object.entries(p).filter(([k, v]) => projectKnowledgeFieldKeys.includes(k) && v).length;
+    const projectRows = projects.length
+      ? projects
+          .map(
+            (p) => `<div class="sys-list-row" data-project-row="${escHtml(p.id)}" style="cursor:pointer">
+              <span>📁 <strong>${escHtml(p.name)}</strong>${p.status ? ` <span class="meta">· ${escHtml(p.status)}</span>` : ""}</span>
+              <span class="docker-meta">${filledCount(p)}/9 campos</span>
+            </div>
+            <div class="project-detail" id="project-detail-${escHtml(p.id)}" hidden style="padding:8px 12px;font-size:13px">
+              ${projectKnowledgeFieldKeys
+                .map((k) => `<div><strong>${escHtml(PROJECT_FIELD_LABEL[k] || k)}:</strong> ${escHtml(p[k] || "—")}</div>`)
+                .join("")}
+            </div>`
+          )
+          .join("")
+      : `<p class="tagline">Sin proyectos todavía.</p>`;
+    const docRows = documents.length
+      ? documents
+          .map(
+            (d) => `<div class="sys-list-row" data-doc-row="${escHtml(d.id)}" style="cursor:pointer">
+              <span>📄 <strong>${escHtml(d.label)}</strong></span>
+              <span class="docker-meta">${d.chars.toLocaleString("es-ES")} car.</span>
+            </div>
+            <div class="project-detail" id="doc-detail-${escHtml(d.id)}" hidden style="padding:8px 12px;font-size:12px;white-space:pre-wrap;max-height:240px;overflow-y:auto"></div>`
+          )
+          .join("")
+      : `<p class="tagline">Sin documentos.</p>`;
+    els.aiBody.innerHTML = `
+      <div class="docker-actions">
+        <button type="button" class="dk-btn ghost" id="ai-knowledge-back">← Volver</button>
+        <button type="button" class="dk-btn ghost" id="ai-knowledge-backup-btn">💾 Descargar backup</button>
+      </div>
+      <div class="perf-block" style="margin-top:10px">
+        <h3>🧠 BMO Knowledge</h3>
+        <div class="devices-kv">
+          <div class="cell"><div class="label">Memorias</div><div class="value">${dash.memories}</div></div>
+          <div class="cell"><div class="label">Proyectos</div><div class="value">${dash.projects}</div></div>
+          <div class="cell"><div class="label">Documentos</div><div class="value">${dash.documents}</div></div>
+          <div class="cell"><div class="label">Dispositivos</div><div class="value">${dash.devices}</div></div>
+          <div class="cell"><div class="label">Versión</div><div class="value">${escHtml(dash.version)}</div></div>
+        </div>
+      </div>
+      <h3 style="margin-top:14px">📁 Proyectos</h3>
+      <div>${projectRows}</div>
+      <h3 style="margin-top:14px">📄 Documentación de BMO</h3>
+      <div>${docRows}</div>
+      <h3 style="margin-top:14px">🕸️ Grafo de conocimiento</h3>
+      <p class="tagline">${(graph.nodes || []).length} nodos · ${(graph.edges || []).length} relaciones reales (construido a partir de tus datos, no inventado)</p>
+      <div>${graphGroups}</div>`;
+    document.getElementById("ai-knowledge-back")?.addEventListener("click", () => {
+      state.aiView = "settings";
+      renderAiPanel();
+    });
+    document.getElementById("ai-knowledge-backup-btn")?.addEventListener("click", async () => {
+      try {
+        const backup = await api("/api/ai/knowledge/backup");
+        const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `bmo-knowledge-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        toast("Backup descargado");
+      } catch (err) {
+        toast(err.message || "No se pudo generar el backup");
+      }
+    });
+    els.aiBody.querySelectorAll("[data-project-row]").forEach((row) => {
+      row.addEventListener("click", () => {
+        const id = row.getAttribute("data-project-row");
+        const detail = document.getElementById(`project-detail-${id}`);
+        if (detail) detail.hidden = !detail.hidden;
+      });
+    });
+    els.aiBody.querySelectorAll("[data-doc-row]").forEach((row) => {
+      row.addEventListener("click", async () => {
+        const id = row.getAttribute("data-doc-row");
+        const detail = document.getElementById(`doc-detail-${id}`);
+        if (!detail) return;
+        if (!detail.hidden) {
+          detail.hidden = true;
+          return;
+        }
+        if (!detail.dataset.loaded) {
+          detail.textContent = "Cargando...";
+          try {
+            const doc = await api(`/api/ai/knowledge/documents/${id}`);
+            detail.textContent = doc.content;
+            detail.dataset.loaded = "1";
+          } catch (err) {
+            detail.textContent = err.message || "Error";
+          }
+        }
+        detail.hidden = false;
+      });
+    });
+  }
+
+  // 6.8.26 - BMO AI Center: lista de agentes reales (agentRegistry.js en
+  // el backend) con estado/permisos/capacidades - alcance "agentes
+  // ligeros" (sin llamadas de modelo separadas por agente, ver
+  // feature_multi_agent_architecture_design.md en memoria).
+  async function renderAiAgentsView() {
+    els.aiBody.innerHTML = `<p class="tagline">Cargando...</p>`;
+    let agents = [];
+    let lastCall = null;
+    let queue = null;
+    let cost = null;
+    let agentActivity = {};
+    let codingAllowlist = {};
+    try {
+      const res = await api("/api/ai/agents");
+      agents = res.agents || [];
+      lastCall = res.lastCall || null;
+      queue = res.queue || null;
+      cost = res.cost || null;
+      agentActivity = res.agentActivity || {};
+    } catch (err) {
+      els.aiBody.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
+      return;
+    }
+    try {
+      codingAllowlist = (await api("/api/ai/coding/allowlist")).allowlist || {};
+    } catch {
+      /* opcional - no bloquea el resto de la pantalla si falla */
+    }
+    const multiAgentOn = !!(state.aiStatus && state.aiStatus.multiAgentEnabled);
+    const queueHtml =
+      queue && (queue.processing || queue.waiting)
+        ? `<p class="tagline">⏳ ${queue.processing ? "hay un turno en curso" : ""}${queue.waiting ? `${queue.processing ? " · " : ""}${queue.waiting} esperando su turno` : ""}</p>`
+        : "";
+    const costHtml = cost
+      ? `<p class="tagline">Uso real: ${cost.total.calls} llamada(s) · ${cost.total.inputTokens} tokens entrada / ${cost.total.outputTokens} salida en total${cost.fallbackCalls ? ` · ${cost.fallbackCalls} cayeron al respaldo local` : ""}</p>`
+      : "";
+    const lastCallHtml =
+      lastCall && lastCall.at
+        ? `<p class="tagline">Última llamada al modelo: ${lastCall.ok ? "✅" : "❌"} ${escHtml(formatHistoryWhen(lastCall.at))} · ${lastCall.latencyMs != null ? Math.round(lastCall.latencyMs / 100) / 10 + "s" : "?"}${lastCall.retried ? " · reintentada" : ""}${lastCall.fellBack ? " · 🔁 respaldo Ollama local" : ""}${lastCall.error ? ` · ${escHtml(lastCall.error)}` : ""}</p>`
+        : `<p class="tagline">Todavía no se ha llamado al modelo en esta sesión.</p>`;
+    const permHtml = (perm) =>
+      Object.entries(perm || {})
+        .filter(([, n]) => n > 0)
+        .map(([tier, n]) => `${n} ${tier}`)
+        .join(" · ") || "sin tools";
+    const rows = agents
+      .map((a) => {
+        const statusMeta = AGENT_STATUS_META[a.status] || { icon: "⚪", label: a.status };
+        const activity = agentActivity[a.id];
+        const activityHtml = activity
+          ? `<p><strong>Actividad (tool-calls):</strong> ${activity.calls} total · ${activity.ok} ok · ${activity.failed} fallidas${activity.lastAt ? ` · última ${escHtml(formatHistoryWhen(activity.lastAt))}` : ""}</p>`
+          : `<p><strong>Actividad:</strong> sin registro todavía</p>`;
+        const codingBlockHtml =
+          a.id === "coding"
+            ? `<div class="perf-block" style="margin-top:10px">
+                <p><strong>Proyectos permitidos</strong> (solo estos puede leer/proponer cambios, en copia — nunca los toca de verdad):</p>
+                ${
+                  Object.keys(codingAllowlist).length
+                    ? Object.entries(codingAllowlist)
+                        .map(
+                          ([name, e]) =>
+                            `<div class="sys-list-row"><span><code>${escHtml(name)}</code> · ${escHtml(e.path)}${e.testCommand ? ` · tests: <code>${escHtml(e.testCommand)}</code>` : ""}</span><button type="button" class="dk-btn ghost" data-coding-remove="${escHtml(name)}">Quitar</button></div>`
+                        )
+                        .join("")
+                    : `<p class="tagline">Ninguno todavía — sin proyectos añadidos, el Coding Agent no puede hacer nada.</p>`
+                }
+                <form id="coding-allowlist-form" class="ai-settings-form" style="margin-top:8px">
+                  <label>Nombre (el que usarás al pedirle un cambio)<input type="text" name="name" required /></label>
+                  <label>Ruta local completa del proyecto<input type="text" name="path" required /></label>
+                  <label>Comando de tests (opcional)<input type="text" name="testCommand" placeholder="npm test" /></label>
+                  <button type="submit" class="dk-btn">Añadir</button>
+                </form>
+              </div>`
+            : "";
+        return `<div class="sys-list-row" data-agent-row="${escHtml(a.id)}" style="cursor:pointer">
+          <span>${AGENT_ICON[a.id] || "🤖"} <strong>${escHtml(a.name)}</strong> <span class="meta">${statusMeta.icon} ${statusMeta.label}</span></span>
+          <span class="docker-meta">${a.tools.length} tool(s)</span>
+        </div>
+        <div class="project-detail" id="agent-detail-${escHtml(a.id)}" hidden style="padding:8px 12px;font-size:13px">
+          <p>${escHtml(a.description)}</p>
+          <p><strong>Modelo:</strong> ${escHtml(a.model.provider || "—")} / ${escHtml(a.model.model || "—")}</p>
+          <p><strong>Permisos:</strong> ${escHtml(permHtml(a.permissions))}</p>
+          ${activityHtml}
+          ${a.can.length ? `<p><strong>Puede:</strong></p><ul>${a.can.map((c) => `<li>✓ ${escHtml(c)}</li>`).join("")}</ul>` : ""}
+          ${a.cannot.length ? `<p><strong>No puede:</strong></p><ul>${a.cannot.map((c) => `<li>✗ ${escHtml(c)}</li>`).join("")}</ul>` : ""}
+          ${a.tools.length ? `<p><strong>Tools:</strong> ${escHtml(a.tools.join(", "))}</p>` : ""}
+          ${codingBlockHtml}
+        </div>`;
+      })
+      .join("");
+    els.aiBody.innerHTML = `
+      <div class="docker-actions">
+        <button type="button" class="dk-btn ghost" id="ai-agents-back">← Volver</button>
+      </div>
+      <div class="perf-block" style="margin-top:10px">
+        <h3>🤖 BMO AI Center</h3>
+        ${lastCallHtml}
+        ${queueHtml}
+        ${costHtml}
+        <p class="tagline">${agents.filter((a) => a.status === "READY").length} de ${agents.length} agentes listos. ${multiAgentOn ? "🟡 Arquitectura multi-agente ACTIVA: cada turno puede repartirse en varias llamadas paralelas." : "Alcance actual: un modelo por turno, sin llamadas paralelas (activable en Ajustes)."}</p>
+      </div>
+      <div style="margin-top:10px">${rows}</div>`;
+    document.getElementById("ai-agents-back")?.addEventListener("click", () => {
+      state.aiView = "settings";
+      renderAiPanel();
+    });
+    els.aiBody.querySelectorAll("[data-agent-row]").forEach((row) => {
+      row.addEventListener("click", () => {
+        const detail = document.getElementById(`agent-detail-${row.getAttribute("data-agent-row")}`);
+        if (detail) detail.hidden = !detail.hidden;
+      });
+    });
+    document.getElementById("coding-allowlist-form")?.addEventListener("click", (e) => e.stopPropagation());
+    document.getElementById("coding-allowlist-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try {
+        await api("/api/ai/coding/allowlist", {
+          method: "POST",
+          body: JSON.stringify({ name: fd.get("name"), path: fd.get("path"), testCommand: fd.get("testCommand") || undefined }),
+        });
+        toast("Proyecto añadido");
+        renderAiAgentsView();
+      } catch (err) {
+        toast(err.message || "No se pudo añadir");
+      }
+    });
+    els.aiBody.querySelectorAll("[data-coding-remove]").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        try {
+          await api(`/api/ai/coding/allowlist/${encodeURIComponent(btn.getAttribute("data-coding-remove"))}`, { method: "DELETE" });
+          toast("Proyecto quitado");
+          renderAiAgentsView();
+        } catch (err) {
+          toast(err.message || "No se pudo quitar");
+        }
+      });
+    });
+  }
+
+  const projectKnowledgeFieldKeys = ["description", "technologies", "repository", "status", "tasks", "architecture", "documentation", "versions", "history"];
+  const PROJECT_FIELD_LABEL = {
+    description: "Descripción",
+    technologies: "Tecnologías",
+    repository: "Repositorio",
+    status: "Estado",
+    tasks: "Tareas",
+    architecture: "Arquitectura",
+    documentation: "Documentación",
+    versions: "Versiones",
+    history: "Historial",
+  };
+
+  // 6.7.7 - Semantic Search en la UI: aiMemoryQuery vive en el closure (no
+  // en `state`, no necesita persistir entre vistas) para poder re-renderizar
+  // sin perder lo que el usuario ya escribio en la caja de busqueda.
+  let aiMemoryQuery = "";
+  let aiMemorySearchTimer = null;
 
   async function renderAiMemoryView() {
     els.aiBody.innerHTML = `<p class="tagline">Cargando...</p>`;
     let facts = [];
     try {
-      const res = await api("/api/ai/memory");
+      const q = aiMemoryQuery.trim();
+      const res = await api(q ? `/api/ai/memory?q=${encodeURIComponent(q)}` : "/api/ai/memory");
       facts = res.facts || [];
     } catch (err) {
       els.aiBody.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
       return;
     }
+    const hasQuery = !!aiMemoryQuery.trim();
+    // 6.7.7 - matchType/score solo vienen cuando hay busqueda activa (el
+    // listado plano sin query no los tiene, ver aiMemoryService.list()).
+    const matchBadge = (f) => {
+      if (!hasQuery || !f.matchType) return "";
+      return f.matchType === "semantic"
+        ? `<span class="meta" title="Encontrado por significado, no por texto exacto">🧠 semántico · ${Math.round((f.score || 0) * 100)}%</span>`
+        : `<span class="meta" title="Coincidencia de texto exacto">🔤 palabra clave</span>`;
+    };
+    // 6.7.3 - /api/ai/memory ya devuelve mas-reciente-primero desde el
+    // backend (antes era orden de insercion, por eso hacia falta este
+    // .reverse() aqui - ya no).
     const rows = facts.length
       ? facts
-          .slice()
-          .reverse()
           .map(
-            (f) => `<div class="sys-list-row">
-              <span>${escHtml(MEMORY_CATEGORY_LABEL[f.category] || f.category)}: ${escHtml(f.text)}</span>
-              <button type="button" class="activity-more" data-memory-delete="${escHtml(f.id)}">Borrar</button>
+            (f) => `<div class="sys-list-row" style="flex-wrap:wrap">
+              <span style="flex:1 1 100%">${escHtml(MEMORY_CATEGORY_LABEL[f.category] || f.category)}: ${escHtml(f.text)} ${matchBadge(f)}</span>
+              <span class="meta" style="flex:1 1 auto;display:flex;gap:8px;align-items:center">
+                🎯 <select data-memory-confidence="${escHtml(f.id)}" style="font-size:12px">
+                  <option value="high" ${f.confidence === "high" ? "selected" : ""}>⭐ Alta</option>
+                  <option value="medium" ${f.confidence === "medium" ? "selected" : ""}>🤔 Media</option>
+                  <option value="low" ${f.confidence === "low" ? "selected" : ""}>❓ Baja</option>
+                </select>
+                🔏 <select data-memory-privacy="${escHtml(f.id)}" style="font-size:12px">
+                  <option value="public" ${f.privacyLevel === "public" ? "selected" : ""}>🌐 Pública</option>
+                  <option value="private" ${!f.privacyLevel || f.privacyLevel === "private" ? "selected" : ""}>🔒 Privada</option>
+                  <option value="sensitive" ${f.privacyLevel === "sensitive" ? "selected" : ""}>⚠️ Sensible</option>
+                  <option value="restricted" ${f.privacyLevel === "restricted" ? "selected" : ""}>⛔ Restringida</option>
+                </select>
+              </span>
+              <span class="discovery-row-actions">
+                <button type="button" class="activity-more" data-memory-edit="${escHtml(f.id)}" data-memory-text="${escHtml(f.text)}">✏️</button>
+                <button type="button" class="activity-more" data-memory-delete="${escHtml(f.id)}">Borrar</button>
+              </span>
             </div>`
           )
           .join("")
-      : `<p class="tagline">Todavía no hay nada guardado. Pídeselo a BMO por chat ("recuerda que...") o añádelo aquí.</p>`;
+      : hasQuery
+        ? `<p class="tagline">Sin resultados para "${escHtml(aiMemoryQuery.trim())}".</p>`
+        : `<p class="tagline">Todavía no hay nada guardado. Pídeselo a BMO por chat ("recuerda que...") o añádelo aquí.</p>`;
     els.aiBody.innerHTML = `
       <div class="docker-actions">
         <button type="button" class="dk-btn ghost" id="ai-memory-back">← Volver</button>
@@ -9774,15 +10530,29 @@
             <option value="proyectos">📁 Proyectos</option>
             <option value="rutinas">🔁 Rutinas</option>
             <option value="eventos">📌 Eventos</option>
+            <option value="tecnico">💻 Técnico</option>
+            <option value="configuracion">🔧 Configuración</option>
           </select>
         </label>
         <label>Dato a recordar
           <input type="text" name="text" placeholder="p.ej. mi restaurante favorito es..." required />
         </label>
+        <label>Privacidad
+          <select name="privacyLevel">
+            <option value="private" selected>🔒 Privada (normal)</option>
+            <option value="public">🌐 Pública</option>
+            <option value="sensitive">⚠️ Sensible (solo si se pregunta)</option>
+            <option value="restricted">⛔ Restringida (nunca a la IA)</option>
+          </select>
+        </label>
         <button type="submit" class="dk-btn">Guardar</button>
       </form>
+      <label style="display:block;margin-top:12px">🔍 Buscar (por significado, no solo texto exacto)
+        <input type="search" id="ai-memory-search" placeholder="p.ej. en qué tecnología está hecho el servidor" value="${escHtml(aiMemoryQuery)}" />
+      </label>
       <div style="margin-top:10px">${rows}</div>`;
     document.getElementById("ai-memory-back")?.addEventListener("click", () => {
+      aiMemoryQuery = "";
       state.aiView = "settings";
       renderAiPanel();
     });
@@ -9790,12 +10560,29 @@
       e.preventDefault();
       const fd = new FormData(e.target);
       try {
-        await api("/api/ai/memory", { method: "POST", body: JSON.stringify({ category: fd.get("category"), text: fd.get("text") }) });
+        await api("/api/ai/memory", { method: "POST", body: JSON.stringify({ category: fd.get("category"), text: fd.get("text"), privacyLevel: fd.get("privacyLevel") }) });
         renderAiMemoryView();
       } catch (err) {
         toast(err.message || "No se pudo guardar");
       }
     });
+    const searchInput = document.getElementById("ai-memory-search");
+    if (searchInput) {
+      // 6.7.7 - debounce a 400ms (esperar a que el embedding local termine
+      // de calcularse cada vez seria demasiado lento tecla a tecla).
+      searchInput.addEventListener("input", () => {
+        clearTimeout(aiMemorySearchTimer);
+        const value = searchInput.value;
+        aiMemorySearchTimer = setTimeout(() => {
+          aiMemoryQuery = value;
+          renderAiMemoryView();
+        }, 400);
+      });
+      if (hasQuery) {
+        searchInput.focus();
+        searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
+      }
+    }
     els.aiBody.querySelectorAll("[data-memory-delete]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         try {
@@ -9803,6 +10590,45 @@
           renderAiMemoryView();
         } catch (err) {
           toast(err.message || "No se pudo borrar");
+        }
+      });
+    });
+    // 6.7.11/6.7.15 - Confidence + Privacy Levels: cambio inmediato al
+    // elegir en el select, sin necesidad de un boton "Guardar" aparte -
+    // mismo criterio tactil que el resto de selects de la app.
+    els.aiBody.querySelectorAll("[data-memory-confidence]").forEach((sel) => {
+      sel.addEventListener("change", async () => {
+        try {
+          await api(`/api/ai/memory/${encodeURIComponent(sel.getAttribute("data-memory-confidence"))}`, { method: "PUT", body: JSON.stringify({ confidence: sel.value }) });
+          toast("Confianza actualizada");
+        } catch (err) {
+          toast(err.message || "No se pudo actualizar");
+        }
+      });
+    });
+    els.aiBody.querySelectorAll("[data-memory-privacy]").forEach((sel) => {
+      sel.addEventListener("change", async () => {
+        try {
+          await api(`/api/ai/memory/${encodeURIComponent(sel.getAttribute("data-memory-privacy"))}`, { method: "PUT", body: JSON.stringify({ privacyLevel: sel.value }) });
+          toast("Privacidad actualizada");
+        } catch (err) {
+          toast(err.message || "No se pudo actualizar");
+        }
+      });
+    });
+    // 6.7.17 - Memory Explorer: Edit (la unica accion que faltaba, Delete
+    // ya existia). Update ya existe en el backend desde 6.7.3.
+    els.aiBody.querySelectorAll("[data-memory-edit]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.getAttribute("data-memory-edit");
+        const current = btn.getAttribute("data-memory-text") || "";
+        const next = window.prompt("Editar recuerdo:", current);
+        if (next == null || next.trim() === "" || next === current) return;
+        try {
+          await api(`/api/ai/memory/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ text: next }) });
+          renderAiMemoryView();
+        } catch (err) {
+          toast(err.message || "No se pudo editar");
         }
       });
     });
@@ -9899,6 +10725,8 @@
     if (state.aiView === "audit") return renderAiAuditView();
     if (state.aiView === "memory") return renderAiMemoryView();
     if (state.aiView === "tasks") return renderAiTasksView();
+    if (state.aiView === "knowledge") return renderAiKnowledgeView();
+    if (state.aiView === "agents") return renderAiAgentsView();
     if (state.aiView === "settings") return renderAiSettingsView();
     if (!state.aiStatus || !state.aiStatus.configured) return renderAiNotConfiguredView();
     return renderAiChatView();
@@ -9993,6 +10821,7 @@
   els.integrationsBody = document.getElementById("integrations-body");
   els.integrationsBack = document.getElementById("integrations-back");
 
+  let sysStateCache = {};
   const INTEGRATIONS_META = [
     { key: "bmo", label: "BMO Core", icon: "⬡", open: () => openEstadoPanel().catch(() => {}) },
     { key: "mipc", label: "MI-PC", icon: "🖥️", open: () => { setAppNav("dispositivos", { keepPanels: true }); openDevicesPanel("hub").catch(() => {}); } },
@@ -10001,16 +10830,27 @@
     { key: "steam", label: "Steam", icon: "🎮", open: () => openSteamPanel().catch(() => {}) },
     { key: "grafana", label: "Grafana", icon: "📈", open: () => openMonitorPanel().catch(() => {}) },
     { key: "prometheus", label: "Prometheus", icon: "📊", open: () => openMonitorPanel().catch(() => {}) },
+    // 4.13.5/KAN-31 - unica fila sin Deep Link real (es un proyecto externo
+    // del usuario, no un subsistema propio de BMO) - abre la URL publica
+    // real en una pestaña nueva en vez de un panel interno inexistente.
+    { key: "supermarketComparator", label: "SupermarketComparator", icon: "🛒", open: () => window.open("https://supermarket-comparator-api.onrender.com/health", "_blank") },
+    // 4.13.4/KAN-30 - Plex instalado en MI-PC 2026-08-25. Sin panel propio
+    // en BMO (no es un subsistema suyo) - el Deep Link abre su web real,
+    // con la IP que devolvio la comprobacion en vivo (sigue a MI-PC si
+    // cambia de IP, no queda fija a la de hoy).
+    { key: "plex", label: "Plex", icon: "🎬", open: () => window.open((sysStateCache.plex && sysStateCache.plex.webUrl) || "", "_blank") },
+    // 4.13.9/KAN-10 - Home Assistant desplegado 2026-08-25 via el propio
+    // sistema de Templates (docker-compose, stack "homeassistant") - mismo
+    // contenedor propio de BMO que Grafana/Prometheus, viene ya incluido en
+    // sysState (sin llamada de red aparte), Deep Link abre su web local.
+    { key: "homeassistant", label: "Home Assistant", icon: "🏠", open: () => window.open(`http://${window.location.hostname}:8123`, "_blank") },
   ];
 
-  // 4.13.4/4.13.5 - Plex/SupermarketComparator siguen bloqueados a
-  // proposito hasta tener servidor Plex o mas detalle - ver memoria de
-  // sesion. Steam (4.13.3) ya esta completo (18/08/2026), se movio a
-  // INTEGRATIONS_META arriba.
+  // Steam (4.13.3), SupermarketComparator (4.13.5/KAN-31) y Plex
+  // (4.13.4/KAN-30) ya se movieron arriba a INTEGRATIONS_META - los tres con
+  // comprobacion real, no decorativa.
   const INTEGRATIONS_NOT_CONNECTED = [
-    { label: "Plex", icon: "🎬", note: "Pendiente de servidor Plex" },
     { label: "Home Assistant", icon: "🏠", note: "No configurado" },
-    { label: "SupermarketComparator", icon: "🛒", note: "Pendiente de definir integración" },
     // 5.1.11 - registrado en el Integration Registry del backend
     // (GET /api/integrations) pero sin implementación real todavía.
     { label: "Telegram", icon: "✈️", note: "No configurado" },
@@ -10042,12 +10882,46 @@
     } catch {
       sysState = {};
     }
+    // 4.13.5/KAN-31 - SupermarketComparator es una comprobacion HTTPS real
+    // (proyecto externo en Render, cold start hasta 30-60s) - separada de
+    // /api/system/state (todo lo demas ahi es local/sincrono) para no
+    // bloquear el resto del panel si Render esta dormido. Fallo silencioso
+    // (sysState.supermarketComparator queda undefined -> "desconocido").
+    try {
+      sysState.supermarketComparator = await api("/api/system/supermarket-comparator-status");
+    } catch {
+      /* opcional */
+    }
+    // 4.13.4/KAN-30 - Plex: comprobacion LAN real, sin cold-start (a
+    // diferencia de SupermarketComparator en Render) pero igualmente
+    // separada de /api/system/state por el mismo motivo (llamada de red).
+    try {
+      sysState.plex = await api("/api/system/plex-status");
+    } catch {
+      /* opcional */
+    }
+    sysStateCache = sysState;
+
+    // 2026-08-25 (6.6.9) - config real del cliente HA (URL + token), para
+    // que BMO pueda controlar entidades de verdad, no solo ver que el
+    // contenedor esta arriba.
+    let haStatus = { baseUrl: "http://127.0.0.1:8123", enabled: true, configured: false };
+    try {
+      haStatus = await api("/api/homeassistant/settings");
+    } catch {
+      /* opcional */
+    }
 
     const connectedHtml = INTEGRATIONS_META.map((m) => {
       const s = sysState[m.key] || {};
-      const dot = integrationsDot(s.status);
-      const detail =
-        m.key === "docker" ? `${s.running || 0}/${s.total || 0} activos` : s.status || "desconocido";
+      const dot = integrationsDot(s.status === "unknown" ? "warning" : s.status);
+      let detail = s.status || "desconocido";
+      if (m.key === "docker") detail = `${s.running || 0}/${s.total || 0} activos`;
+      else if (m.key === "supermarketComparator") {
+        detail = s.status === "online" ? `en línea · ${s.latencyMs || "?"}ms` : s.status === "unknown" ? "despertando (Render)…" : s.status || "desconocido";
+      } else if (m.key === "plex") {
+        detail = s.status === "online" ? `en línea · v${s.version || "?"}` : s.status || "desconocido";
+      }
       return `<button type="button" class="integration-row" data-integration="${m.key}">
         <span class="integration-ico">${m.icon}</span>
         <span class="integration-info">
@@ -10073,6 +10947,17 @@
       <div class="integrations-list">${connectedHtml}</div>
       <h3 style="margin:14px 0 4px;font-size:14px">No conectadas</h3>
       <div class="integrations-list">${notConnectedHtml}</div>
+      <div class="perf-block" style="margin-top:14px">
+        <h3 style="margin:0 0 4px;font-size:14px">🏠 Home Assistant — control real</h3>
+        <p class="tagline">${haStatus.configured ? "Token configurado." : "Sin token todavía - BMO ve el contenedor arriba pero no puede controlar entidades reales hasta que le des un token."} Genéralo en HA: perfil (abajo del todo, icono de tu usuario) → Tokens de acceso de larga duración → Crear token.</p>
+        <form id="ha-settings-form" class="ai-settings-form">
+          <label>URL base<input type="text" name="baseUrl" value="${escHtml(haStatus.baseUrl || "")}" placeholder="http://127.0.0.1:8123" /></label>
+          <label>Token ${haStatus.configured ? "(ya configurado — deja en blanco para no cambiarlo)" : ""}<input type="password" name="token" autocomplete="off" placeholder="${haStatus.configured ? "••••••••" : "eyJhbGciOi..."}" /></label>
+          <button type="submit" class="dk-btn">Guardar</button>
+          <button type="button" class="dk-btn ghost" id="ha-test-btn">Probar conexión</button>
+        </form>
+        <p class="tagline" id="ha-test-result"></p>
+      </div>
     `;
 
     els.integrationsBody.querySelectorAll("[data-integration]").forEach((btn) => {
@@ -10083,6 +10968,35 @@
           meta.open();
         }
       });
+    });
+
+    document.getElementById("ha-settings-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try {
+        await api("/api/homeassistant/settings", {
+          method: "POST",
+          body: JSON.stringify({ baseUrl: fd.get("baseUrl") || undefined, token: fd.get("token") || undefined }),
+        });
+        toast("Ajustes de Home Assistant guardados");
+        openIntegrationsPanel();
+      } catch (err) {
+        toast(err.message || "No se pudo guardar");
+      }
+    });
+    document.getElementById("ha-test-btn")?.addEventListener("click", async () => {
+      const out = document.getElementById("ha-test-result");
+      if (out) out.textContent = "Probando…";
+      try {
+        const res = await api("/api/homeassistant/test");
+        if (out) {
+          out.textContent = res.ok
+            ? `✅ Conectado - Home Assistant ${res.version || "?"}${res.locationName ? ` (${res.locationName})` : ""}`
+            : `❌ ${res.status === "not_configured" ? "Sin token configurado" : res.detail || "No se pudo conectar"}`;
+        }
+      } catch (err) {
+        if (out) out.textContent = `❌ ${err.message || "Error"}`;
+      }
     });
   }
 
@@ -10974,10 +11888,11 @@
     const tick = async () => {
       let task;
       try {
-        task = await api(`/api/tasks/${taskId}`);
+        ({ task } = await api(`/api/tasks/${taskId}`));
       } catch {
         return; // sondeo transitorio
       }
+      if (!task) return;
       state.sceneRunResult = { ...(task.detail || {}), taskStatus: task.status };
       renderSceneResult();
       if (task.status !== "running") {
