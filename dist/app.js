@@ -303,7 +303,12 @@
       "X-BMO-Key": API_KEY,
       ...(options.headers || {}),
     };
-    const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+    // KAN-107 (7.0.3) - /api/v1: unico punto de reescritura para los ~283
+    // call-sites que ya pasan por este helper. /api/* sigue vivo en el
+    // servidor como fallback, esto solo hace que el cliente prefiera el
+    // prefijo nuevo desde ya.
+    const v1Path = path.startsWith("/api/v1/") ? path : path.replace(/^\/api\//, "/api/v1/");
+    const res = await fetch(`${API_BASE}${v1Path}`, { ...options, headers });
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
       let msg = errText || `HTTP ${res.status}`;
@@ -6510,7 +6515,7 @@
       });
       if (!ok) return;
       try {
-        await fetch("/api/auth/logout", {
+        await fetch("/api/v1/auth/logout", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -13415,7 +13420,7 @@
   async function downloadLogsPanel() {
     if (!state.logsPluginId) return;
     try {
-      const res = await fetch(`${API_BASE}/api/plugins/${state.logsPluginId}/logs/download`, {
+      const res = await fetch(`${API_BASE}/api/v1/plugins/${state.logsPluginId}/logs/download`, {
         headers: { "X-BMO-Key": API_KEY },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

@@ -55,7 +55,7 @@
     // No se toca el flujo normal de app.js: si Modo Seguro esta apagado,
     // este script no hace nada.
     (function () {
-      fetch("/api/system/state")
+      fetch("/api/v1/system/state")
         .then((r) => r.json())
         .then((s) => {
           if (!s || !s.safeMode) return;
@@ -75,7 +75,7 @@
           document.getElementById("safemode-exit-btn").addEventListener("click", function (e) {
             e.target.disabled = true;
             e.target.textContent = "Reiniciando…";
-            fetch("/api/system/safe-mode/exit", { method: "POST" }).then(function () {
+            fetch("/api/v1/system/safe-mode/exit", { method: "POST" }).then(function () {
               setTimeout(function () {
                 window.location.reload();
               }, 6000);
@@ -174,7 +174,7 @@
           btn.disabled = true;
           btn.textContent = isSetup ? "Creando…" : "Entrando…";
 
-          fetch("/api/auth/" + (isSetup ? "setup" : "login"), {
+          fetch("/api/v1/auth/" + (isSetup ? "setup" : "login"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ username: username, password: password, trustDevice: trustDevice }),
@@ -211,7 +211,7 @@
 
       function verifyToken(token) {
         if (!token) return Promise.resolve(false);
-        return fetch("/api/auth/me", { headers: { Authorization: "Bearer " + token } })
+        return fetch("/api/v1/auth/me", { headers: { Authorization: "Bearer " + token } })
           .then(function (r) {
             return r.ok;
           })
@@ -220,7 +220,7 @@
           });
       }
 
-      fetch("/api/system/state")
+      fetch("/api/v1/system/state")
         .then(function (r) {
           return r.json();
         })
@@ -242,7 +242,7 @@
             if (deviceOk) return;
             return verifyToken(sessionToken).then(function (sessionOk) {
               if (sessionOk) return;
-              return fetch("/api/auth/status")
+              return fetch("/api/v1/auth/status")
                 .then(function (r) {
                   return r.json();
                 })
@@ -541,9 +541,10 @@
 
       <div id="view-dispositivos" class="app-view" hidden>
         <section class="section">
-          <div class="perf-head">
-            <h2>Dispositivos</h2>
+          <div class="perf-head" style="padding:0 0 6px">
+            <h2 style="margin:0">🌐 BMO Ecosystem</h2>
           </div>
+          <p class="tagline view-sub">Dispositivos, cámara, audio y grupos.</p>
           <div id="devices-body" class="perf-body"></div>
         </section>
       </div>

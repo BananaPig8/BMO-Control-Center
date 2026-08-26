@@ -3763,6 +3763,32 @@ button:not(:disabled):active, .dk-btn:not(:disabled):active {
   text-transform: uppercase;
   color: var(--muted, #8aa0b5);
 }
+.devices-discovery, .devices-groups { margin-bottom: 12px; }
+.group-checklist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.discovery-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.discovery-head h3 { margin: 0; }
+.discovery-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(61,169,255,0.14);
+  background: rgba(0,0,0,0.18);
+  margin-top: 8px;
+}
+.discovery-row-actions { display: flex; gap: 6px; }
+.discovery-row-actions button { padding: 6px 10px; font-size: 12px; }
 .devices-kv {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
