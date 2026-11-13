@@ -15,7 +15,7 @@
   <meta name="apple-mobile-web-app-title" content="BMO" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Poppins:wght@700;800&family=Roboto+Mono:wght@500;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./styles.css" />
   <link rel="stylesheet" href="./vendor/xterm/xterm.css" />
   <link rel="stylesheet" href="./vendor/codemirror/codemirror.css" />
@@ -376,6 +376,11 @@
               <span class="sic-title">BMO Brain</span>
               <span class="sic-sub">Contexto, eventos, decisiones, salud</span>
             </button>
+            <button type="button" class="sys-icon-card" data-sys-open="bmovoice">
+              <span class="sic-ico sic-green">🗣️</span>
+              <span class="sic-title">BMO Voice</span>
+              <span class="sic-sub">Habla con BMO</span>
+            </button>
           </div>
 
           <div class="sys-section-head"><h3>Ecosistema</h3></div>
@@ -511,6 +516,31 @@
               <span class="sic-title">Security Center</span>
               <span class="sic-sub">Estado real por área, sin puntuación</span>
             </button>
+            <button type="button" class="sys-icon-card" data-sys-open="inframap">
+              <span class="sic-ico sic-amber">🗺️</span>
+              <span class="sic-title">Mapa de Infraestructura</span>
+              <span class="sic-sub">Internet → Router → dispositivos → Docker</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="offline">
+              <span class="sic-ico sic-amber">📡</span>
+              <span class="sic-title">Modo Offline</span>
+              <span class="sic-sub">Qué sigue funcionando sin Internet</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="ecodash">
+              <span class="sic-ico sic-amber">🧭</span>
+              <span class="sic-title">Ecosistema BMO</span>
+              <span class="sic-sub">Sistema · Dispositivos · Servicios · Proyectos · Docker · Red · Seguridad</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="modos">
+              <span class="sic-ico sic-amber">🧑‍💻</span>
+              <span class="sic-title">Modos Personales</span>
+              <span class="sic-sub">Home · Trabajo · Mañana · Noche · Gaming · Viaje…</span>
+            </button>
+            <button type="button" class="sys-icon-card" data-sys-open="personal">
+              <span class="sic-ico sic-amber">🗂️</span>
+              <span class="sic-title">Mi Espacio Personal</span>
+              <span class="sic-sub">Tareas · Proyectos · Notas · Decisiones · Rutinas · Analítica · Privacidad</span>
+            </button>
             <button type="button" class="sys-icon-card" data-sys-open="maintenance">
               <span class="sic-ico sic-amber">🛠️</span>
               <span class="sic-title">Mantenimiento</span>
@@ -574,24 +604,31 @@
     </div>
   </div>
 
-  <div id="spotify-panel" class="spotify-panel" hidden>
-    <div class="spotify-sheet">
-      <div class="spotify-topbar">
-        <button type="button" id="spotify-back" class="sp-back-btn" aria-label="Volver">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6 9 12l6 6"/></svg>
-        </button>
-        <div class="sp-breadcrumb" aria-label="Ruta">
-          <span>Servicios</span>
-          <span class="sp-bc-sep">›</span>
-          <span class="sp-bc-current">Spotify</span>
-        </div>
-        <div class="sp-conn" id="spotify-conn"><span class="sp-conn-dot"></span> Conectado</div>
+  <!-- KAN-393 BMO Music: sustituye al panel de Spotify como punto de entrada -->
+  <div id="bmomusic-panel" class="bm-panel" hidden>
+    <div class="bm-app">
+      <nav class="bm-nav" aria-label="BMO Music">
+        <div class="bm-brand"><img src="./assets/bmo.webp" alt="" /><span>BMO Music</span></div>
+        <button type="button" class="bm-nav-btn" data-bm-view="home"><span class="bm-nav-ico">⌂</span><span class="bm-nav-label">Inicio</span></button>
+        <button type="button" class="bm-nav-btn" data-bm-view="search"><span class="bm-nav-ico">⌕</span><span class="bm-nav-label">Buscar</span></button>
+        <button type="button" class="bm-nav-btn" data-bm-view="library"><span class="bm-nav-ico">▤</span><span class="bm-nav-label">Biblioteca</span></button>
+        <button type="button" class="bm-nav-btn" data-bm-view="devices"><span class="bm-nav-ico">◉</span><span class="bm-nav-label">Dispositivos</span></button>
+      </nav>
+      <div class="bm-main">
+        <header class="bm-header">
+          <button type="button" class="bm-back" id="bmomusic-back" aria-label="Volver"><svg class="bm-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <img class="bm-avatar" id="bm-avatar" src="./assets/bmo.webp" alt="" />
+          <div class="bm-greet">
+            <div class="bm-greet-title" id="bm-greet-title">BMO Music</div>
+            <div class="bm-greet-sub" id="bm-greet-sub"></div>
+          </div>
+          <div class="bm-conn" id="bm-conn"></div>
+        </header>
+        <div class="bm-view" id="bm-view"></div>
+        <div class="bm-mini" id="bm-mini" hidden></div>
       </div>
-      <div class="spotify-title-block">
-        <h1>Spotify</h1>
-        <p class="sp-oauth" id="spotify-oauth-line">OAuth <span class="on">activo</span></p>
-      </div>
-      <div id="spotify-body" class="spotify-body"></div>
+      <div class="bm-np" id="bm-np" hidden></div>
+      <div class="bm-sheet" id="bm-devsheet" hidden role="dialog" aria-modal="true" aria-label="Elegir dispositivo"></div>
     </div>
   </div>
 
@@ -679,6 +716,232 @@
     </div>
   </div>
 
+  <div id="pokemon-home-panel" class="sys-sub-panel poke-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="pokemon-home-back">← Volver</button>
+        <h2>🎮 Pokémon</h2>
+      </div>
+      <div id="pokemon-home-body" class="perf-body"></div>
+      <nav class="poke-tabbar">
+        <button type="button" class="poke-tab active" data-poke-tab="home"><span class="poke-tab-ico"><img src="./assets/icon_home.svg" alt="" /></span><span class="poke-tab-label">Inicio</span></button>
+        <button type="button" class="poke-tab" data-poke-tab="explore"><span class="poke-tab-ico"><img src="./assets/icon_tree.svg" alt="" /></span><span class="poke-tab-label">Explorar</span></button>
+        <button type="button" class="poke-tab poke-tab-center" data-poke-tab="team"><span class="poke-tab-ico poke-tab-ico-center"><img src="./assets/pokeball.svg" alt="Pokémon" /></span></button>
+        <button type="button" class="poke-tab" data-poke-tab="team"><span class="poke-tab-ico"><img src="./assets/pokeball.svg" alt="" /></span><span class="poke-tab-label">Pokémon</span></button>
+        <button type="button" class="poke-tab" data-poke-tab="dex"><span class="poke-tab-ico"><img src="./assets/icon_book.svg" alt="" /></span><span class="poke-tab-label">Pokédex</span></button>
+      </nav>
+    </div>
+  </div>
+
+  <div id="pokedex-panel" class="sys-sub-panel poke-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="pokedex-back">← Volver</button>
+        <h2>📖 Pokédex</h2>
+      </div>
+      <div id="pokedex-body" class="perf-body"></div>
+      <nav class="poke-tabbar">
+        <button type="button" class="poke-tab" data-poke-tab="home"><span class="poke-tab-ico"><img src="./assets/icon_home.svg" alt="" /></span><span class="poke-tab-label">Inicio</span></button>
+        <button type="button" class="poke-tab" data-poke-tab="explore"><span class="poke-tab-ico"><img src="./assets/icon_tree.svg" alt="" /></span><span class="poke-tab-label">Explorar</span></button>
+        <button type="button" class="poke-tab poke-tab-center" data-poke-tab="team"><span class="poke-tab-ico poke-tab-ico-center"><img src="./assets/pokeball.svg" alt="Pokémon" /></span></button>
+        <button type="button" class="poke-tab" data-poke-tab="team"><span class="poke-tab-ico"><img src="./assets/pokeball.svg" alt="" /></span><span class="poke-tab-label">Pokémon</span></button>
+        <button type="button" class="poke-tab active" data-poke-tab="dex"><span class="poke-tab-ico"><img src="./assets/icon_book.svg" alt="" /></span><span class="poke-tab-label">Pokédex</span></button>
+      </nav>
+    </div>
+  </div>
+
+  <div id="pokemon-explore-panel" class="sys-sub-panel poke-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="pokemon-explore-back">← Volver</button>
+        <h2>🌍 Explorar</h2>
+      </div>
+      <div id="pokemon-explore-body" class="perf-body"></div>
+      <nav class="poke-tabbar">
+        <button type="button" class="poke-tab" data-poke-tab="home"><span class="poke-tab-ico"><img src="./assets/icon_home.svg" alt="" /></span><span class="poke-tab-label">Inicio</span></button>
+        <button type="button" class="poke-tab active" data-poke-tab="explore"><span class="poke-tab-ico"><img src="./assets/icon_tree.svg" alt="" /></span><span class="poke-tab-label">Explorar</span></button>
+        <button type="button" class="poke-tab poke-tab-center" data-poke-tab="team"><span class="poke-tab-ico poke-tab-ico-center"><img src="./assets/pokeball.svg" alt="Pokémon" /></span></button>
+        <button type="button" class="poke-tab" data-poke-tab="team"><span class="poke-tab-ico"><img src="./assets/pokeball.svg" alt="" /></span><span class="poke-tab-label">Pokémon</span></button>
+        <button type="button" class="poke-tab" data-poke-tab="dex"><span class="poke-tab-ico"><img src="./assets/icon_book.svg" alt="" /></span><span class="poke-tab-label">Pokédex</span></button>
+      </nav>
+    </div>
+  </div>
+
+  <div id="pokebag-panel" class="sys-sub-panel poke-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="pokebag-back">← Volver</button>
+        <h2>🎒 Mochila</h2>
+      </div>
+      <div id="pokebag-body" class="perf-body"></div>
+      <nav class="poke-tabbar">
+        <button type="button" class="poke-tab" data-poke-tab="home"><span class="poke-tab-ico"><img src="./assets/icon_home.svg" alt="" /></span><span class="poke-tab-label">Inicio</span></button>
+        <button type="button" class="poke-tab" data-poke-tab="explore"><span class="poke-tab-ico"><img src="./assets/icon_tree.svg" alt="" /></span><span class="poke-tab-label">Explorar</span></button>
+        <button type="button" class="poke-tab poke-tab-center" data-poke-tab="team"><span class="poke-tab-ico poke-tab-ico-center"><img src="./assets/pokeball.svg" alt="Pokémon" /></span></button>
+        <button type="button" class="poke-tab" data-poke-tab="team"><span class="poke-tab-ico"><img src="./assets/pokeball.svg" alt="" /></span><span class="poke-tab-label">Pokémon</span></button>
+        <button type="button" class="poke-tab" data-poke-tab="dex"><span class="poke-tab-ico"><img src="./assets/icon_book.svg" alt="" /></span><span class="poke-tab-label">Pokédex</span></button>
+      </nav>
+    </div>
+  </div>
+
+  <div id="pokemoves-panel" class="sys-sub-panel poke-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="pokemoves-back">← Volver</button>
+        <h2>🥋 Movimientos</h2>
+      </div>
+      <div id="pokemoves-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="poketrain-panel" class="sys-sub-panel poke-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="poketrain-back">← Volver</button>
+        <h2>🏋️ Entrenamiento</h2>
+      </div>
+      <div id="poketrain-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="pokecare-panel" class="sys-sub-panel poke-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="pokecare-back">← Volver</button>
+        <h2>❤️ Cuidar</h2>
+      </div>
+      <div id="pokecare-body" class="perf-body"></div>
+      <nav class="poke-tabbar">
+        <button type="button" class="poke-tab" data-poke-tab="home"><span class="poke-tab-ico"><img src="./assets/icon_home.svg" alt="" /></span><span class="poke-tab-label">Inicio</span></button>
+        <button type="button" class="poke-tab" data-poke-tab="explore"><span class="poke-tab-ico"><img src="./assets/icon_tree.svg" alt="" /></span><span class="poke-tab-label">Explorar</span></button>
+        <button type="button" class="poke-tab poke-tab-center active" data-poke-tab="team"><span class="poke-tab-ico poke-tab-ico-center"><img src="./assets/pokeball.svg" alt="Pokémon" /></span></button>
+        <button type="button" class="poke-tab" data-poke-tab="team"><span class="poke-tab-ico"><img src="./assets/pokeball.svg" alt="" /></span><span class="poke-tab-label">Pokémon</span></button>
+        <button type="button" class="poke-tab" data-poke-tab="dex"><span class="poke-tab-ico"><img src="./assets/icon_book.svg" alt="" /></span><span class="poke-tab-label">Pokédex</span></button>
+      </nav>
+    </div>
+  </div>
+
+  <div id="pokemedals-panel" class="sys-sub-panel poke-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="pokemedals-back">← Volver</button>
+        <h2>🎖️ Medallero</h2>
+      </div>
+      <div id="pokemedals-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="pokeachievements-panel" class="sys-sub-panel poke-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="pokeachievements-back">← Volver</button>
+        <h2>🏆 Logros</h2>
+      </div>
+      <div id="pokeachievements-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="pokedaycare-panel" class="sys-sub-panel poke-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="pokedaycare-back">← Volver</button>
+        <h2>🐣 Guardería</h2>
+      </div>
+      <div id="pokedaycare-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="pokeprogress-panel" class="sys-sub-panel poke-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="pokeprogress-back">← Volver</button>
+        <h2>📊 Progresión</h2>
+      </div>
+      <div id="pokeprogress-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="pokeevents-panel" class="sys-sub-panel poke-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="pokeevents-back">← Volver</button>
+        <h2>🎉 Eventos</h2>
+      </div>
+      <div id="pokeevents-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="pokebox-panel" class="sys-sub-panel poke-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="pokebox-back">← Volver</button>
+        <h2>📦 Cajas</h2>
+      </div>
+      <div id="pokebox-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="infra-map-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="infra-map-back">← Volver</button>
+        <h2>🗺️ Mapa de Infraestructura</h2>
+      </div>
+      <div id="infra-map-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="offline-status-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="offline-status-back">← Volver</button>
+        <h2>📡 Modo Offline</h2>
+      </div>
+      <div id="offline-status-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="eco-dashboard-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="eco-dashboard-back">← Volver</button>
+        <h2>🧭 Ecosistema BMO</h2>
+      </div>
+      <div id="eco-dashboard-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="modos-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="modos-back">← Volver</button>
+        <h2>🧑‍💻 Modos Personales</h2>
+      </div>
+      <div id="modos-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <div id="personal-panel" class="docker-panel" hidden>
+    <div class="docker-sheet">
+      <div class="docker-head">
+        <button type="button" id="personal-back">← Volver</button>
+        <h2>🧑‍💻 Mi Espacio Personal</h2>
+      </div>
+      <div class="docker-tabs" role="tablist">
+        <button type="button" class="docker-tab active" data-personal-tab="resumen" role="tab">Resumen</button>
+        <button type="button" class="docker-tab" data-personal-tab="tareas" role="tab">Tareas</button>
+        <button type="button" class="docker-tab" data-personal-tab="proyectos" role="tab">Proyectos</button>
+        <button type="button" class="docker-tab" data-personal-tab="notas" role="tab">Notas</button>
+        <button type="button" class="docker-tab" data-personal-tab="decisiones" role="tab">Decisiones</button>
+        <button type="button" class="docker-tab" data-personal-tab="rutinas" role="tab">Rutinas</button>
+        <button type="button" class="docker-tab" data-personal-tab="calendario" role="tab">Calendario</button>
+        <button type="button" class="docker-tab" data-personal-tab="analitica" role="tab">Analítica</button>
+        <button type="button" class="docker-tab" data-personal-tab="privacidad" role="tab">Privacidad</button>
+      </div>
+      <div id="personal-body" class="docker-body"></div>
+    </div>
+  </div>
+
   <div id="publicapi-panel" class="sys-sub-panel" hidden>
     <div class="perf-sheet">
       <div class="perf-head">
@@ -760,6 +1023,18 @@
       </div>
       <div id="health-body" class="perf-body"></div>
       <div id="boot-sequence-body" class="perf-body"></div>
+    </div>
+  </div>
+
+  <!-- BMO Voice F7 (KAN-412) -->
+  <div id="bmovoice-panel" class="sys-sub-panel" hidden>
+    <div class="perf-sheet">
+      <div class="perf-head">
+        <button type="button" id="bmovoice-back">← Volver</button>
+        <h2>BMO Voice 🗣️</h2>
+        <span></span>
+      </div>
+      <div id="bmovoice-body" class="perf-body bv-body"></div>
     </div>
   </div>
 
@@ -1051,6 +1326,7 @@
         <button type="button" class="events-filter" data-events-filter="warning">🟠 Warning</button>
         <button type="button" class="events-filter" data-events-filter="notice">🔵 Notice</button>
         <button type="button" class="events-filter" data-events-filter="info">🟢 Info</button>
+        <button type="button" class="events-filter" data-events-filter="multimodal">👁️ Multimodal</button>
       </div>
       <div id="events-body" class="perf-body"></div>
     </div>

@@ -10,7 +10,7 @@
   // dejaba fuera "tailscale serve" (caía al IP de LAN fijo, inalcanzable
   // desde fuera de casa, y encima http:// desde una página https://).
   const API_BASE = window.location.port === "5173" ? `http://${BMO_HOST}:8080` : "";
-  const API_KEY = "6cf4e9146401b55bfb0f324e00b916981e0afe5c5705af46dc58a55cefd12495";
+  const API_KEY = "__BMO_API_KEY__"; // deploy_ui.py la rellena desde .env
   // Cuenta/gestión real de Docker en este BMO
   const PORTAINER_URL = `http://${BMO_HOST}:9000`;
   const PORTAINER_EMBED_URL = `http://${BMO_HOST}:9001`;
@@ -144,6 +144,7 @@
     { id: "files", name: "File Browser", live: false, color: "#7c5cff", icon: "📁" },
     { id: "mqtt", name: "MQTT", live: false, color: "#a3e635", icon: "📡" },
     { id: "spotify", name: "Spotify", live: true, color: "#1db954", iconImg: "./assets/spotify.png" },
+    { id: "pokemon", name: "Pokémon", live: true, color: "#e3350d", iconImg: "./assets/pokeball.svg" },
   ];
 
   const els = {
@@ -175,9 +176,6 @@
     configImport: document.getElementById("config-import"),
     configImportFile: document.getElementById("config-import-file"),
     configErrors: document.getElementById("config-errors"),
-    spotifyPanel: document.getElementById("spotify-panel"),
-    spotifyBody: document.getElementById("spotify-body"),
-    spotifyBack: document.getElementById("spotify-back"),
     dockerPanel: document.getElementById("docker-panel"),
     dockerBody: document.getElementById("docker-body"),
     dockerBack: document.getElementById("docker-back"),
@@ -622,7 +620,7 @@
 
   function closeSpotifyPanel() {
     stopSpotifyPolling();
-    if (els.spotifyPanel) els.spotifyPanel.hidden = true;
+    closeBmoMusic();
   }
 
   function fmtMs(ms) {
@@ -632,472 +630,23 @@
     return `${m}:${String(s).padStart(2, "0")}`;
   }
 
-  function updateSpotifyChrome(s) {
-    const conn = document.getElementById("spotify-conn");
-    const oauth = document.getElementById("spotify-oauth-line");
-    if (conn) {
-      if (!s.configured) {
-        conn.className = "sp-conn off";
-        conn.innerHTML = `<span class="sp-conn-dot"></span> Sin config`;
-      } else if (!s.connected) {
-        conn.className = "sp-conn off";
-        conn.innerHTML = `<span class="sp-conn-dot"></span> Desconectado`;
-      } else {
-        conn.className = "sp-conn";
-        conn.innerHTML = `<span class="sp-conn-dot"></span> Conectado`;
-      }
-    }
-    if (oauth) {
-      if (!s.configured) oauth.innerHTML = `OAuth <span class="off">pendiente</span>`;
-      else if (!s.connected) oauth.innerHTML = `OAuth <span class="off">sin cuenta</span>`;
-      else oauth.innerHTML = `OAuth <span class="on">activo</span>`;
-    }
-  }
-
-  function spotifyTrackRow(track, subText, opts) {
-    const thumb = track.image
-      ? `<img class="sp-q-thumb" src="${escHtml(track.image)}" alt="" />`
-      : `<div class="sp-q-thumb" aria-hidden="true"></div>`;
-    const inner = `
-        ${thumb}
-        <div class="sp-q-meta">
-          <h4>${escHtml(track.name)}</h4>
-          <p>${escHtml(subText || track.artists || "—")}</p>
-        </div>`;
-    if (opts && opts.clickable && track.uri) {
-      return `<button type="button" class="sp-q-row sp-q-row-btn" data-sp-play-track="${escHtml(track.uri)}">${inner}</button>`;
-    }
-    return `<div class="sp-q-row">${inner}</div>`;
-  }
-
-  function spotifyPlaylistRow(pl) {
-    const thumb = pl.image
-      ? `<img class="sp-q-thumb" src="${escHtml(pl.image)}" alt="" />`
-      : `<div class="sp-q-thumb" aria-hidden="true"></div>`;
-    return `
-      <button type="button" class="sp-q-row sp-q-row-btn" data-sp-play-playlist="${escHtml(pl.uri)}">
-        ${thumb}
-        <div class="sp-q-meta">
-          <h4>${escHtml(pl.name)}</h4>
-          <p>${escHtml(pl.tracksTotal || 0)} canciones${pl.owner ? " · " + escHtml(pl.owner) : ""}</p>
-        </div>
-      </button>`;
-  }
-
-  function spotifyScopeErrorHtml(err) {
-    const insufficient =
-      /insufficient client scope/i.test(err?.message || "") ||
-      err?.details?.error?.status === 403;
-    if (insufficient) {
-      return `<div class="sp-stub">Tu conexión con Spotify no tiene permiso para esto todavía. Desconecta y vuelve a conectar tu cuenta para concederlo.</div>`;
-    }
-    return `<div class="sp-stub">${escHtml(err?.message || "Error cargando datos de Spotify")}</div>`;
-  }
-
-  async function loadSpotifyTabData(tab) {
-    if (tab === "cola" && state.spotifyQueueData) return;
-    if (tab === "favoritos" && state.spotifyFavorites) return;
-    if (tab === "playlists" && state.spotifyPlaylists) return;
-    state.spotifyTabLoading = true;
-    state.spotifyTabError = null;
-    renderSpotifyBody();
-    try {
-      if (tab === "cola") {
-        state.spotifyQueueData = await api("/api/spotify/queue");
-      } else if (tab === "favoritos") {
-        const res = await api("/api/spotify/saved-tracks");
-        state.spotifyFavorites = res.items || [];
-      } else if (tab === "playlists") {
-        const res = await api("/api/spotify/playlists");
-        state.spotifyPlaylists = res.items || [];
-      }
-    } catch (err) {
-      state.spotifyTabError = err;
-    } finally {
-      state.spotifyTabLoading = false;
-      renderSpotifyBody();
-    }
-  }
-
-  function spotifyTabBody(s) {
-    const tab = state.spotifyTab || "cola";
-
-    if (state.spotifyTabLoading) {
-      return `<div class="sp-stub">Cargando…</div>`;
-    }
-    if (state.spotifyTabError) {
-      return spotifyScopeErrorHtml(state.spotifyTabError);
-    }
-
-    if (tab === "favoritos") {
-      const items = state.spotifyFavorites || [];
-      if (!items.length) return `<div class="sp-stub">Sin canciones guardadas en tu cuenta de Spotify.</div>`;
-      return `
-        <div class="sp-list-head">
-          <h3>Favoritos · ${items.length}</h3>
-          <button type="button" class="dk-btn" data-sp-play-favorites>▶ Reproducir todo</button>
-        </div>
-        <div class="sp-queue">${items.map((t) => spotifyTrackRow(t, t.artists, { clickable: true })).join("")}</div>`;
-    }
-
-    if (tab === "playlists") {
-      const items = state.spotifyPlaylists || [];
-      if (!items.length) return `<div class="sp-stub">No tienes playlists en tu cuenta de Spotify.</div>`;
-      return `
-        <div class="sp-list-head"><h3>Playlists · ${items.length}</h3></div>
-        <div class="sp-queue">${items.map(spotifyPlaylistRow).join("")}</div>`;
-    }
-
-    const data = state.spotifyQueueData;
-    const current = (data && data.currentlyPlaying) || s.track;
-    const queue = (data && data.queue) || [];
-    const q = (state.spotifySearch || "").trim().toLowerCase();
-    let items = [];
-    if (current) items.push({ ...current, sub: "Sonando ahora" });
-    items = items.concat(queue.map((t) => ({ ...t, sub: t.artists })));
-    if (q) {
-      items = items.filter((t) =>
-        `${t.name || ""} ${t.artists || ""} ${t.album || ""}`.toLowerCase().includes(q)
-      );
-    }
-    const rows = items.length
-      ? `<div class="sp-queue">${items.map((t) => spotifyTrackRow(t, t.sub)).join("")}</div>`
-      : q
-        ? `<div class="sp-stub">Sin coincidencias para «${escHtml(state.spotifySearch)}».</div>`
-        : `<div class="sp-stub">Nada en cola ahora mismo.</div>`;
-    return `
-      <div class="sp-list-head">
-        <h3>En cola · ${items.length}</h3>
-      </div>
-      ${rows}`;
-  }
-
-  function bindSpotifyControls(s) {
-    els.spotifyBody.querySelector("#sp-device")?.addEventListener("change", async (e) => {
-      try {
-        await api("/api/spotify/device", {
-          method: "POST",
-          body: JSON.stringify({ deviceId: e.target.value }),
-        });
-        toast("Dispositivo Spotify fijado");
-        await refreshSpotifyStatus();
-      } catch (err) {
-        toast(err.message);
-      }
-    });
-    els.spotifyBody.querySelector("#sp-prev")?.addEventListener("click", () => spotifyAction("previous"));
-    els.spotifyBody.querySelector("#sp-next")?.addEventListener("click", () => spotifyAction("next"));
-    els.spotifyBody.querySelector("#sp-toggle")?.addEventListener("click", () =>
-      spotifyAction(s.playing ? "pause" : "play")
-    );
-    els.spotifyBody.querySelector("#sp-shuffle")?.addEventListener("click", async () => {
-      try {
-        await api("/api/spotify/shuffle", {
-          method: "POST",
-          body: JSON.stringify({ state: !s.shuffleState }),
-        });
-        await refreshSpotifyStatus();
-      } catch (err) {
-        toast(err.message || "No se pudo cambiar aleatorio");
-      }
-    });
-    els.spotifyBody.querySelector("#sp-queue-jump")?.addEventListener("click", () => {
-      state.spotifyTab = "cola";
-      renderSpotifyBody();
-      loadSpotifyTabData("cola").catch(() => {});
-    });
-    const vol = els.spotifyBody.querySelector("#sp-volume");
-    const volLabel = els.spotifyBody.querySelector("#sp-vol-label");
-    vol?.addEventListener("pointerdown", () => {
-      state.spotifyVolDragging = true;
-    });
-    vol?.addEventListener("pointerup", () => {
-      state.spotifyVolDragging = false;
-    });
-    vol?.addEventListener("input", () => {
-      if (volLabel) volLabel.textContent = `${vol.value}%`;
-    });
-    vol?.addEventListener("change", async () => {
-      state.spotifyVolDragging = false;
-      try {
-        await api("/api/spotify/volume", {
-          method: "POST",
-          body: JSON.stringify({ volume: Number(vol.value) }),
-        });
-      } catch (err) {
-        toast(err.message);
-      }
-    });
-    els.spotifyBody.querySelector("#sp-heart")?.addEventListener("click", () => {
-      toast("Favoritos: aún no hay API en BMO");
-    });
-    els.spotifyBody.querySelectorAll(".sp-tab").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        state.spotifyTab = btn.dataset.spTab || "cola";
-        renderSpotifyBody();
-        loadSpotifyTabData(state.spotifyTab).catch(() => {});
-      });
-    });
-    els.spotifyBody.querySelectorAll("[data-sp-play-playlist]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const contextUri = btn.getAttribute("data-sp-play-playlist");
-        try {
-          await api("/api/spotify/play-context", {
-            method: "POST",
-            body: JSON.stringify({ contextUri }),
-          });
-          toast("▶ Reproduciendo playlist");
-          state.spotifyQueueData = null;
-          await refreshSpotifyStatus();
-        } catch (err) {
-          toast(err.message || "No se pudo reproducir la playlist");
-        }
-      });
-    });
-    els.spotifyBody.querySelector("[data-sp-play-favorites]")?.addEventListener("click", async () => {
-      const uris = (state.spotifyFavorites || []).map((t) => t.uri).filter(Boolean);
-      if (!uris.length) {
-        toast("Sin canciones guardadas para reproducir");
-        return;
-      }
-      try {
-        await api("/api/spotify/play-context", {
-          method: "POST",
-          body: JSON.stringify({ uris }),
-        });
-        toast("▶ Reproduciendo Favoritos");
-        state.spotifyQueueData = null;
-        await refreshSpotifyStatus();
-      } catch (err) {
-        toast(err.message || "No se pudieron reproducir los favoritos");
-      }
-    });
-    els.spotifyBody.querySelectorAll("[data-sp-play-track]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const uri = btn.getAttribute("data-sp-play-track");
-        const uris = (state.spotifyFavorites || []).map((t) => t.uri).filter(Boolean);
-        try {
-          await api("/api/spotify/play-context", {
-            method: "POST",
-            body: JSON.stringify({ uris, offset: { uri } }),
-          });
-          toast("▶ Reproduciendo");
-          state.spotifyQueueData = null;
-          await refreshSpotifyStatus();
-        } catch (err) {
-          toast(err.message || "No se pudo reproducir la canción");
-        }
-      });
-    });
-    const search = els.spotifyBody.querySelector("#sp-search");
-    search?.addEventListener("input", () => {
-      state.spotifySearch = search.value || "";
-      const host = els.spotifyBody.querySelector("#sp-tab-host");
-      if (host) host.innerHTML = spotifyTabBody(s);
-    });
-    els.spotifyBody.querySelector("#sp-disconnect")?.addEventListener("click", async () => {
-      try {
-        await api("/api/spotify/disconnect", { method: "POST", body: "{}" });
-        state.spotifyQueueData = null;
-        state.spotifyFavorites = null;
-        state.spotifyPlaylists = null;
-        toast("Spotify desconectado");
-        await refreshSpotifyStatus();
-      } catch (err) {
-        toast(err.message);
-      }
-    });
-    els.spotifyBody.querySelector("#sp-open-cfg")?.addEventListener("click", () => {
-      closeSpotifyPanel();
-      openConfigPanel("spotify", "Spotify");
-    });
-    els.spotifyBody.querySelector("#sp-connect")?.addEventListener("click", connectSpotify);
-  }
-
-  function renderSpotifyBody() {
-    const s = state.spotify || {
-      connected: false,
-      configured: false,
-      playing: false,
-      track: null,
-      device: null,
-      devices: [],
-      volume: 70,
-      progressMs: 0,
-    };
-    updateSpotifyChrome(s);
-
-    if (!s.configured) {
-      els.spotifyBody.innerHTML = `
-        <div class="spotify-setup">
-          <p>Para controlar Spotify en tu PC:</p>
-          <ol>
-            <li>Crea una app en developer.spotify.com</li>
-            <li>Redirect URI: <code>http://${BMO_HOST}:8080/api/spotify/callback</code></li>
-            <li>Guarda Client ID + Secret en la config del plugin</li>
-            <li>Vuelve aquí y conecta tu cuenta Premium</li>
-          </ol>
-          <button type="button" class="sp-btn secondary" id="sp-open-cfg">Abrir configuración</button>
-        </div>`;
-      bindSpotifyControls(s);
-      return;
-    }
-
-    if (!s.connected) {
-      els.spotifyBody.innerHTML = `
-        <div class="spotify-setup">
-          <p>Credenciales listas. Conecta tu cuenta Premium para controlar el PC.</p>
-          <button type="button" class="sp-btn" id="sp-connect">Conectar con Spotify</button>
-          <button type="button" class="sp-btn secondary" id="sp-open-cfg">Editar Client ID / Secret</button>
-        </div>`;
-      bindSpotifyControls(s);
-      return;
-    }
-
-    const track = s.track;
-    const title = escHtml(track?.name || "Nada en reproducción");
-    const artists = escHtml(track?.artists || "Abre Spotify en el PC y dale al play una vez");
-    const album = escHtml(track?.album || "");
-    const art = track?.image
-      ? `<img class="sp-art" src="${escHtml(track.image)}" alt="" />`
-      : `<div class="sp-art" aria-hidden="true"></div>`;
-    const devices = s.devices || [];
-    const deviceOpts = devices.length
-      ? devices
-          .map(
-            (d) =>
-              `<option value="${escHtml(d.id)}" ${
-                s.deviceId === d.id || d.isActive ? "selected" : ""
-              }>${escHtml(d.name)}</option>`
-          )
-          .join("")
-      : `<option value="">No hay dispositivos — abre Spotify Desktop</option>`;
-    const dur = track?.durationMs || 0;
-    const prog = Math.min(Number(s.progressMs) || 0, dur || 0);
-    const pct = dur > 0 ? Math.round((prog / dur) * 1000) / 10 : 0;
-    const vol = state.spotifyVolDragging
-      ? Number(els.spotifyBody.querySelector("#sp-volume")?.value ?? s.volume ?? 70)
-      : s.volume ?? 70;
-    const tab = state.spotifyTab || "cola";
-    const pauseIcon =
-      '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
-    const playIcon =
-      '<svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-    const skipPrev =
-      '<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>';
-    const skipNext =
-      '<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M16 6h2v12h-2zm-1.5 6L6 18V6z"/></svg>';
-    const shuffleIcon =
-      '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>';
-    const queueIcon =
-      '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h10v2H4z"/></svg>';
-
-    els.spotifyBody.innerHTML = `
-      <div class="spotify-player">
-        <div class="sp-now">
-          <div class="sp-art-wrap">
-            ${art}
-            <button type="button" class="sp-heart" id="sp-heart" aria-label="Favorito">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21s-7-4.4-9.5-8.2C.7 9.7 2.2 6 6 6c2 0 3.2 1.1 4 2.2C10.8 7.1 12 6 14 6c3.8 0 5.3 3.7 3.5 6.8C19 16.6 12 21 12 21z"/></svg>
-            </button>
-          </div>
-          <div class="sp-meta">
-            <h3>${title}</h3>
-            <p>${artists}${album ? ` · ${album}` : ""}</p>
-          </div>
-          <div class="sp-progress">
-            <span class="sp-time" id="sp-t0">${fmtMs(prog)}</span>
-            <input class="sp-bar" id="sp-progress" type="range" min="0" max="1000" value="${Math.round(
-              pct * 10
-            )}" style="--sp-pct:${pct}%" disabled aria-label="Progreso" />
-            <span class="sp-time" id="sp-t1">${fmtMs(dur)}</span>
-          </div>
-          <div class="sp-controls">
-            <button type="button" id="sp-shuffle" class="sp-toggle-btn ${s.shuffleState ? "active" : ""}" aria-label="Aleatorio" aria-pressed="${s.shuffleState ? "true" : "false"}">${shuffleIcon}</button>
-            <button type="button" id="sp-prev" aria-label="Anterior">${skipPrev}</button>
-            <button type="button" class="play" id="sp-toggle" aria-label="Play/Pause">${
-              s.playing ? pauseIcon : playIcon
-            }</button>
-            <button type="button" id="sp-next" aria-label="Siguiente">${skipNext}</button>
-            <button type="button" id="sp-queue-jump" class="sp-toggle-btn ${tab === "cola" ? "active" : ""}" aria-label="Cola">${queueIcon}</button>
-          </div>
-        </div>
-
-        <div class="sp-row2">
-          <div class="sp-mini-card">
-            <div class="sp-mini-label">Reproduciendo en</div>
-            <select id="sp-device" class="sp-device-select">${deviceOpts}</select>
-          </div>
-          <div class="sp-mini-card">
-            <div class="sp-vol-head">
-              <div class="sp-mini-label">Volumen</div>
-              <div class="sp-vol-pct" id="sp-vol-label">${vol}%</div>
-            </div>
-            <input id="sp-volume" class="sp-vol-range" type="range" min="0" max="100" value="${vol}" />
-          </div>
-        </div>
-
-        <div class="sp-tabs" role="tablist">
-          <button type="button" class="sp-tab ${tab === "cola" ? "active" : ""}" data-sp-tab="cola" role="tab">Cola</button>
-          <button type="button" class="sp-tab ${tab === "favoritos" ? "active" : ""}" data-sp-tab="favoritos" role="tab">Favoritos</button>
-          <button type="button" class="sp-tab ${tab === "playlists" ? "active" : ""}" data-sp-tab="playlists" role="tab">Playlists</button>
-        </div>
-        <input id="sp-search" class="sp-search" type="search" placeholder="Buscar canciones, artistas o álbumes..." value="${escHtml(
-          state.spotifySearch || ""
-        )}" />
-        <div id="sp-tab-host">${spotifyTabBody(s)}</div>
-        <button type="button" class="sp-btn secondary" id="sp-disconnect">Desconectar cuenta</button>
-      </div>`;
-
-    bindSpotifyControls(s);
-  }
-
-  async function refreshSpotifyQueueIfStale() {
-    const trackId = state.spotify?.track?.id || null;
-    if (trackId === state.spotifyLastTrackId) return;
-    state.spotifyLastTrackId = trackId;
-    if (!state.spotifyQueueData) return; // never loaded yet, loadSpotifyTabData will handle it
-    try {
-      state.spotifyQueueData = await api("/api/spotify/queue");
-      if (state.spotifyTab === "cola") renderSpotifyBody();
-    } catch {
-      /* keep showing the last known queue on transient errors */
-    }
+  // Texto corto de Spotify para Inicio/servicios (KAN-400).
+  function spotifySubText(sp) {
+    if (!sp) return "cargando…";
+    if (!sp.configured) return "sin config";
+    if (!sp.connected) return "desconectado";
+    if (sp.playing && sp.track) return `▶ ${sp.track.name}`;
+    return (sp.device && sp.device.name) || "conectado";
   }
 
   async function refreshSpotifyStatus() {
     try {
       state.spotify = await api("/api/spotify/status");
-      if (!els.spotifyPanel.hidden && state.spotifyTab === "cola") {
-        await refreshSpotifyQueueIfStale();
-      }
-      if (!els.spotifyPanel.hidden) {
-        if (state.spotifyVolDragging) {
-          updateSpotifyChrome(state.spotify);
-          const t0 = document.getElementById("sp-t0");
-          const bar = document.getElementById("sp-progress");
-          const track = state.spotify?.track;
-          const dur = track?.durationMs || 0;
-          const prog = Math.min(Number(state.spotify.progressMs) || 0, dur || 0);
-          if (t0) t0.textContent = fmtMs(prog);
-          if (bar && dur > 0) bar.value = String(Math.round((prog / dur) * 1000));
-        } else {
-          renderSpotifyBody();
-        }
-      }
       renderServices();
       const sub = els.homeServices?.querySelector('[data-home-svc="spotify"] .hs-sub');
-      if (sub) {
-        const sp = state.spotify;
-        let spotifySub = "—";
-        if (!sp) spotifySub = "cargando…";
-        else if (!sp.configured) spotifySub = "sin config";
-        else if (!sp.connected) spotifySub = "desconectado";
-        else spotifySub = (sp.device && sp.device.name) || "conectado";
-        sub.textContent = spotifySub;
-      }
-    } catch (err) {
-      if (!els.spotifyPanel.hidden) toast(`Spotify: ${err.message}`);
+      if (sub) sub.textContent = spotifySubText(state.spotify);
+    } catch {
+      /* el dashboard no se bloquea si Spotify falla */
     }
   }
 
@@ -1111,19 +660,1260 @@
     }
   }
 
-  async function spotifyAction(action) {
+  // KAN-393/403: BMO Music es la única app de música (panel antiguo retirado en F10).
+  function openSpotifyPanel() {
+    return openBmoMusic();
+  }
+
+  // —— BMO Music (KAN-393) ——
+  // Reutiliza el mismo spotifyService del backend. Sondeo de estado cada 8s
+  // solo con el panel abierto (el backend ya cachea 3s); el progreso se
+  // interpola en cliente cada segundo sin peticiones extra.
+  // var (no const): closeSpotifyPanel() puede llamar a closeBmoMusic()
+  // durante la carga inicial, antes de llegar a esta línea.
+  var bm = {
+    view: "home",
+    status: null,
+    timer: null,
+    tick: null,
+    syncedAt: 0,
+    lastEndRefresh: 0,
+    playlists: null,
+    saved: null,
+    libTab: "playlists",
+    libError: "",
+    lists: {},
+    searchQ: "",
+    searchRes: null,
+    searchTimer: null,
+    searchSeq: 0,
+    busy: false,
+    transferring: null,
+    devError: "",
+    sheet: "devices",
+    queue: null,
+    pageStack: [],
+    prevView: "home",
+    pageCache: {},
+    libFilter: "",
+    libSort: null,
+    ambient: false,
+    lastTouch: Date.now(),
+    likes: {},
+    likeBusy: {},
+    trackIndex: {},
+    savedTotal: 0,
+    savedNext: null,
+    savedLoading: false,
+    savedAll: false,
+    addUri: null,
+  };
+  const BM_PINS_KEY = "bmomusic.pins";
+  const BM_SORT_KEY = "bmomusic.libSort";
+  const BM_AMBIENT_IDLE_MS = 3 * 60 * 1000;
+  const BM_HISTORY_KEY = "bmomusic.searchHistory";
+  const BM_VIS_KEY = "bmomusic.visualizer";
+  // Iconos SVG propios: los glifos Unicode (▶ ⏸ ⏮) tienen métricas distintas
+  // según la fuente y quedaban descentrados dentro de los botones redondos.
+  const BM_STROKE = 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
+  const BM_ICONS = {
+    play: '<path d="M8 5.14v13.72a1 1 0 0 0 1.52.85l10.6-6.86a1 1 0 0 0 0-1.7L9.52 4.29A1 1 0 0 0 8 5.14z"/>',
+    pause: '<rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/>',
+    prev: '<path d="M5 5h2.2v14H5zM20 6.2v11.6a1 1 0 0 1-1.55.83l-8.65-5.8a1 1 0 0 1 0-1.66l8.65-5.8A1 1 0 0 1 20 6.2z"/>',
+    next: '<path d="M16.8 5H19v14h-2.2zM4 6.2v11.6a1 1 0 0 0 1.55.83l8.65-5.8a1 1 0 0 0 0-1.66L5.55 5.37A1 1 0 0 0 4 6.2z"/>',
+    shuffle: `<g ${BM_STROKE}><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/></g>`,
+    repeat: `<g ${BM_STROKE}><path d="M17 2l4 4-4 4"/><path d="M3 11V10a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></g>`,
+    repeatOne: `<g ${BM_STROKE}><path d="M17 2l4 4-4 4"/><path d="M3 11V10a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></g><path d="M11 10.2l1.6-1V15" ${BM_STROKE} stroke-width="1.8"/>`,
+    devices: `<g ${BM_STROKE}><rect x="5" y="2" width="14" height="20" rx="2.5"/><circle cx="12" cy="14" r="3.6"/><path d="M12 6.2h.01"/></g>`,
+    down: `<path d="M6 9l6 6 6-6" ${BM_STROKE}/>`,
+    back: `<path d="M15 6l-6 6 6 6" ${BM_STROKE}/>`,
+    queue: `<g ${BM_STROKE}><path d="M4 6h12"/><path d="M4 12h12"/><path d="M4 18h7"/></g><path d="M15 15.5v5l4.5-2.5z"/>`,
+    plus: `<g ${BM_STROKE}><path d="M12 5v14"/><path d="M5 12h14"/></g>`,
+    heart: `<path d="M12 20.5s-7.5-4.6-9.3-9.2C1.5 8.2 3.6 5 6.9 5c2 0 3.6 1.1 5.1 3 1.5-1.9 3.1-3 5.1-3 3.3 0 5.4 3.2 4.2 6.3-1.8 4.6-9.3 9.2-9.3 9.2z" ${BM_STROKE}/>`,
+    heartFill: `<path d="M12 20.5s-7.5-4.6-9.3-9.2C1.5 8.2 3.6 5 6.9 5c2 0 3.6 1.1 5.1 3 1.5-1.9 3.1-3 5.1-3 3.3 0 5.4 3.2 4.2 6.3-1.8 4.6-9.3 9.2-9.3 9.2z"/>`,
+    playlistAdd: `<g ${BM_STROKE}><path d="M4 6h11"/><path d="M4 12h11"/><path d="M4 18h7"/><path d="M18 14v6"/><path d="M15 17h6"/></g>`,
+    pin: `<path d="M8.5 3h7l-1 6.2 3.2 3.3V14h-11v-1.5L9.5 9.2z"/><path d="M12 14v7" ${BM_STROKE}/>`,
+    ambient: `<g ${BM_STROKE}><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></g>`,
+  };
+  function bmIcon(name) {
+    return `<svg class="bm-ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">${BM_ICONS[name] || ""}</svg>`;
+  }
+
+  function bmStore(key, fallback) {
     try {
-      await api(`/api/spotify/${action}`, { method: "POST", body: "{}" });
-      await refreshSpotifyStatus();
-    } catch (err) {
-      toast(err.message);
+      const v = localStorage.getItem(key);
+      return v == null ? fallback : JSON.parse(v);
+    } catch {
+      return fallback;
     }
   }
 
-  async function openSpotifyPanel() {
-    if (!els.spotifyPanel || !els.spotifyBody) {
-      toast("Panel Spotify no cargado — recarga la página");
-      console.error("spotify-panel missing in DOM");
+  function bmSave(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch {}
+  }
+
+  function bmEl(id) {
+    return document.getElementById(id);
+  }
+
+  function bmBg(url) {
+    return url ? `background-image:url('${escHtml(url).replace(/'/g, "%27")}')` : "";
+  }
+
+  function bmImg(url, cls, alt) {
+    return url
+      ? `<img class="${cls}" src="${escHtml(url)}" alt="${escHtml(alt || "")}" loading="lazy" />`
+      : `<div class="${cls} bm-img-empty">♪</div>`;
+  }
+
+  function bmGreeting() {
+    const h = new Date().getHours();
+    if (h < 6) return "Música para trasnochar";
+    if (h < 13) return "Buenos días";
+    if (h < 21) return "Buenas tardes";
+    return "Buenas noches";
+  }
+
+  function bmMood(s) {
+    if (!s || !s.connected) return { cls: "sleep", line: "BMO está esperando a Spotify" };
+    if (s.playing) return { cls: "happy", line: "¡BMO está escuchando música!" };
+    if (s.track) return { cls: "calm", line: "Música en pausa" };
+    return { cls: "calm", line: "La música está lista" };
+  }
+
+  function bmProgress() {
+    const s = bm.status;
+    if (!s || !s.track) return 0;
+    let p = Number(s.progressMs) || 0;
+    if (s.playing) p += Date.now() - bm.syncedAt;
+    const dur = Number(s.track.durationMs) || p;
+    return Math.min(p, dur);
+  }
+
+  function bmSkeletonCards(n) {
+    return Array.from({ length: n })
+      .map(() => `<div class="bm-card bm-skel"><div class="bm-card-img"></div><span class="bm-skel-line"></span></div>`)
+      .join("");
+  }
+
+  function bmSkeletonRows(n) {
+    return `<div class="bm-rows">${Array.from({ length: n })
+      .map(() => `<div class="bm-row bm-skel"><div class="bm-row-img"></div><span class="bm-skel-line"></span></div>`)
+      .join("")}</div>`;
+  }
+
+  function bmErrorBox(msg) {
+    const m = String(msg || "Error desconocido");
+    const scope = /scope|permission|insufficient/i.test(m);
+    return `<div class="bm-state bm-state-small">
+      <h2>${scope ? "Falta un permiso de Spotify" : "No se pudo cargar"}</h2>
+      <p>${scope ? "Esta función necesita volver a autorizar Spotify con los permisos nuevos (se hace desde la pantalla de BMO)." : escHtml(m)}</p>
+      ${scope ? `<button type="button" class="bm-btn-primary" data-bm-connect>Volver a autorizar</button>` : ""}
+    </div>`;
+  }
+
+  function bmConnectCard(s) {
+    const configured = Boolean(s && s.configured);
+    return `<div class="bm-state">
+      <img src="./assets/bmo.webp" alt="" class="bm-state-bmo" />
+      <h2>${configured ? "Conecta tu cuenta de Spotify" : "Spotify sin configurar"}</h2>
+      <p>${
+        configured
+          ? "BMO necesita permiso para ver y controlar tu música. La autorización se hace desde la pantalla de BMO: Spotify solo acepta volver a esta Raspberry."
+          : "Falta el Client ID / Client Secret de Spotify en la configuración del plugin."
+      }</p>
+      ${configured ? `<button type="button" class="bm-btn-primary" data-bm-connect>Conectar con Spotify</button>` : ""}
+      ${s && s.error ? `<p class="bm-note">${escHtml(s.error)}</p>` : ""}
+    </div>`;
+  }
+
+  // Fijados: solo ids, por pantalla (localStorage) - preferencia de interfaz,
+  // no datos de escucha.
+  function bmPins() {
+    const p = bmStore(BM_PINS_KEY, []);
+    return Array.isArray(p) ? p : [];
+  }
+
+  function bmTogglePin(id) {
+    const p = bmPins();
+    const i = p.indexOf(id);
+    if (i >= 0) p.splice(i, 1);
+    else p.unshift(id);
+    bmSave(BM_PINS_KEY, p.slice(0, 30));
+    return i < 0;
+  }
+
+  function bmOrderPinned(list) {
+    const p = bmPins();
+    if (!p.length) return list;
+    const rank = (pl) => {
+      const i = p.indexOf(pl.id);
+      return i < 0 ? 1e9 : i;
+    };
+    return list
+      .map((x, i) => [x, i])
+      .sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1])
+      .map((x) => x[0]);
+  }
+
+  function bmPlaylistCards(list) {
+    if (!list.length) return `<p class="bm-empty">No hay playlists en tu cuenta.</p>`;
+    const pins = bmPins();
+    return list
+      .map(
+        (pl) => `<button type="button" class="bm-card" data-bm-play-context="${escHtml(pl.uri)}">
+        ${bmImg(pl.image, "bm-card-img", pl.name)}
+        <span class="bm-card-play">${bmIcon("play")}</span>
+        ${pl.id ? `<span class="bm-card-pin ${pins.includes(pl.id) ? "is-on" : ""}" role="button" data-bm-pin="${escHtml(pl.id)}" aria-label="${pins.includes(pl.id) ? "Desfijar" : "Fijar arriba"}">${bmIcon("pin")}</span>` : ""}
+        <span class="bm-card-title">${escHtml(pl.name)}</span>
+        <span class="bm-card-sub">${escHtml(pl.owner || "")}${pl.tracksTotal ? ` · ${pl.tracksTotal} canciones` : ""}</span>
+      </button>`
+      )
+      .join("");
+  }
+
+  // Corazón de Me gusta (solo icono). Estado desconocido -> gris y sin
+  // efecto hasta que Spotify confirma; nunca se inventa.
+  function bmHeart(uri, cls) {
+    if (!uri) return "";
+    const known = uri in bm.likes;
+    const on = bm.likes[uri] === true;
+    return `<span class="bm-heart ${cls || ""} ${on ? "is-on" : ""} ${known ? "" : "is-unknown"}" role="button" tabindex="0" data-bm-heart="${escHtml(uri)}" aria-pressed="${on}" aria-label="${on ? "Quitar de Me gusta" : "Añadir a Me gusta"}">${bmIcon(on ? "heartFill" : "heart")}</span>`;
+  }
+
+  function bmSyncHearts() {
+    document.querySelectorAll("#bmomusic-panel [data-bm-heart]").forEach((el) => {
+      const uri = el.dataset.bmHeart;
+      const known = uri in bm.likes;
+      const on = bm.likes[uri] === true;
+      el.classList.toggle("is-on", on);
+      el.classList.toggle("is-unknown", !known);
+      el.setAttribute("aria-pressed", String(on));
+      el.setAttribute("aria-label", on ? "Quitar de Me gusta" : "Añadir a Me gusta");
+      el.innerHTML = bmIcon(on ? "heartFill" : "heart");
+    });
+  }
+
+  // Consulta en bloques de 20 (límite del backend) solo lo que no se sabe.
+  function bmCheckLikesChunked(uris) {
+    const need = [...new Set(uris)].filter((u) => u && !(u in bm.likes));
+    for (let i = 0; i < need.length; i += 20) bmCheckLikes(need.slice(i, i + 20));
+  }
+
+  function bmTrackRows(list, key) {
+    bm.lists[key] = list.map((t) => t.uri);
+    if (!list.length) return `<p class="bm-empty">Todavía no hay canciones aquí.</p>`;
+    list.forEach((t) => {
+      if (t && t.uri) bm.trackIndex[t.uri] = t;
+    });
+    setTimeout(() => bmCheckLikesChunked(list.map((t) => t.uri)), 0);
+    const cur = bm.status && bm.status.track ? bm.status.track.uri : null;
+    return `<div class="bm-rows">${list
+      .map(
+        (t, i) => `<button type="button" class="bm-row ${t.uri === cur ? "is-current" : ""}" data-bm-play-track="${key}:${i}">
+        ${bmImg(t.image, "bm-row-img", t.album)}
+        <span class="bm-row-text"><span class="bm-row-title">${escHtml(t.name)}</span><span class="bm-row-sub">${escHtml(t.artists)}${t.album ? ` · ${escHtml(t.album)}` : ""}</span></span>
+        <span class="bm-row-dur">${t.durationMs ? fmtMs(t.durationMs) : ""}</span>
+        ${bmHeart(t.uri, "bm-row-heart")}
+        <span class="bm-row-q" role="button" tabindex="0" data-bm-queue-add="${escHtml(t.uri)}" aria-label="Añadir a la cola">${bmIcon("plus")}</span>
+      </button>`
+      )
+      .join("")}</div>`;
+  }
+
+  async function bmLoadPlaylists() {
+    try {
+      bm.playlists = (await api("/api/spotify/playlists")).items || [];
+    } catch (err) {
+      bm.playlists = null;
+      bm.libError = err.message;
+    }
+  }
+
+  function bmAddSavedPage(r) {
+    const items = (r && r.items) || [];
+    items.forEach((t) => {
+      bm.likes[t.uri] = true; // está en favoritos: no hace falta preguntar
+      bm.trackIndex[t.uri] = t;
+    });
+    const seen = new Set((bm.saved || []).map((t) => t.uri));
+    bm.saved = (bm.saved || []).concat(items.filter((t) => !seen.has(t.uri)));
+    bm.savedTotal = Number(r && r.total) || bm.saved.length;
+    bm.savedNext = r && r.next != null ? r.next : null;
+  }
+
+  async function bmLoadSaved() {
+    bm.saved = null;
+    bm.savedNext = null;
+    try {
+      bmAddSavedPage(await api("/api/spotify/saved-tracks?offset=0&limit=50"));
+      bm.savedSyncedAt = Date.now();
+    } catch (err) {
+      bm.saved = null;
+      bm.libError = err.message;
+    }
+  }
+
+  // 12/11/2026 - los favoritos se cargaban UNA sola vez y el kiosco pasa días
+  // sin recargarse: lo que se añadía desde el móvil o el PC no aparecía nunca
+  // (visto en vivo: Spotify ya devolvía la canción nueva y la pantalla no).
+  // Ahora se vuelve a pedir la primera página (al entrar en Favoritos y, con
+  // la lista a la vista, como mucho una vez por minuto); si ha cambiado, se
+  // sustituye la lista por la real. Devuelve true si hubo cambios.
+  async function bmRefreshSaved(minAgeMs) {
+    if (!bm.saved || bm.savedLoading || bm.savedAll || bm.savedRefreshing) return false;
+    if (Date.now() - (bm.savedSyncedAt || 0) < minAgeMs) return false;
+    bm.savedRefreshing = true;
+    try {
+      const r = await api("/api/spotify/saved-tracks?offset=0&limit=50");
+      bm.savedSyncedAt = Date.now();
+      const fresh = (r && r.items) || [];
+      const head = bm.saved.slice(0, fresh.length);
+      const same =
+        Number(r && r.total) === bm.savedTotal &&
+        head.length === fresh.length &&
+        fresh.every((t, i) => t.uri === head[i].uri);
+      if (same) return false;
+      // Lo que estaba en ese tramo y ya no está pudo quitarse desde otro
+      // dispositivo: su corazón se vuelve a comprobar en vez de darse por bueno.
+      const keep = new Set(fresh.map((t) => t.uri));
+      head.forEach((t) => {
+        if (!keep.has(t.uri)) delete bm.likes[t.uri];
+      });
+      bm.saved = null;
+      bm.savedNext = null;
+      bmAddSavedPage(r);
+      return true;
+    } catch {
+      return false; // sin red: se queda la lista que había
+    } finally {
+      bm.savedRefreshing = false;
+    }
+  }
+
+  // Siguiente página (al bajar hasta el final o con el botón).
+  async function bmLoadMoreSaved() {
+    if (bm.savedLoading || bm.savedNext == null || !bm.saved) return false;
+    bm.savedLoading = true;
+    try {
+      bmAddSavedPage(await api(`/api/spotify/saved-tracks?offset=${bm.savedNext}&limit=50`));
+      return true;
+    } catch (err) {
+      toast(`BMO Music: ${err.message}`);
+      return false;
+    } finally {
+      bm.savedLoading = false;
+    }
+  }
+
+  // "Cargar todas": a petición del usuario, página a página con pausa
+  // (no se lanzan 55 peticiones de golpe).
+  async function bmLoadAllSaved() {
+    if (bm.savedAll) return;
+    bm.savedAll = true;
+    while (bm.savedNext != null && bm.view === "library" && bm.libTab === "saved") {
+      const ok = await bmLoadMoreSaved();
+      if (!ok) break;
+      bmFillLibrary();
+      await new Promise((r) => setTimeout(r, 350));
+    }
+    bm.savedAll = false;
+    bmFillLibrary();
+  }
+
+  function bmRenderChrome() {
+    const s = bm.status || {};
+    const mood = bmMood(s);
+    const title = bmEl("bm-greet-title");
+    const sub = bmEl("bm-greet-sub");
+    const av = bmEl("bm-avatar");
+    const conn = bmEl("bm-conn");
+    if (title) title.textContent = bmGreeting();
+    if (sub) sub.textContent = mood.line;
+    if (av) av.className = `bm-avatar ${mood.cls}`;
+    if (conn) {
+      conn.innerHTML = !bm.status
+        ? ""
+        : !s.configured
+          ? `<span class="bm-dot off"></span>Sin configurar`
+          : !s.connected
+            ? `<span class="bm-dot off"></span>Desconectado`
+            : `<span class="bm-dot"></span>${escHtml(s.device ? s.device.name : "Sin dispositivo")}`;
+    }
+    bmRenderMini();
+  }
+
+  function bmRenderMini() {
+    const mini = bmEl("bm-mini");
+    if (!mini) return;
+    const s = bm.status || {};
+    const t = s.track;
+    if (!s.connected || !t) {
+      mini.hidden = true;
+      return;
+    }
+    mini.hidden = false;
+    const pct = t.durationMs ? (bmProgress() / t.durationMs) * 100 : 0;
+    mini.innerHTML = `
+      <div class="bm-mini-progress"><div class="bm-mini-fill" id="bm-mini-fill" style="width:${pct}%"></div></div>
+      <button type="button" class="bm-mini-info" data-bm-open-np>
+        ${bmImg(t.image, "bm-mini-cover", t.album)}
+        <span class="bm-mini-text"><span class="bm-mini-title">${escHtml(t.name)}</span><span class="bm-mini-artist">${escHtml(t.artists)}</span></span>
+      </button>
+      <div class="bm-mini-ctrls">
+        ${bmHeart(t.uri, "bm-ctrl bm-ctrl-sm bm-mini-heart")}
+        <button type="button" class="bm-ctrl bm-ctrl-sm" data-bm-devsheet aria-label="Cambiar dispositivo">${bmIcon("devices")}</button>
+        <button type="button" class="bm-ctrl" data-bm-cmd="previous" aria-label="Anterior">${bmIcon("prev")}</button>
+        <button type="button" class="bm-ctrl bm-ctrl-main" data-bm-cmd="${s.playing ? "pause" : "play"}" aria-label="${s.playing ? "Pausar" : "Reproducir"}">${bmIcon(s.playing ? "pause" : "play")}</button>
+        <button type="button" class="bm-ctrl" data-bm-cmd="next" aria-label="Siguiente">${bmIcon("next")}</button>
+      </div>`;
+  }
+
+  function bmRenderHero() {
+    const hero = bmEl("bm-hero");
+    if (!hero) return;
+    const s = bm.status || {};
+    const t = s.track;
+    if (!t) {
+      hero.className = "bm-hero bm-hero-idle";
+      hero.innerHTML = `<img class="bm-hero-bmo" src="./assets/bmo.webp" alt="" />
+        <div class="bm-hero-meta">
+          <div class="bm-hero-kicker">Nada sonando ahora mismo</div>
+          <div class="bm-hero-title">¿Qué escuchamos?</div>
+          <div class="bm-hero-sub">${
+            s.devices && s.devices.length
+              ? "Elige una playlist o busca algo."
+              : "Abre Spotify en algún dispositivo para que BMO pueda controlarlo."
+          }</div>
+        </div>`;
+      return;
+    }
+    hero.className = `bm-hero ${s.playing ? "is-playing" : ""}`;
+    hero.innerHTML = `
+      <div class="bm-hero-bg" style="${bmBg(t.image)}"></div>
+      <button type="button" class="bm-hero-cover-btn" data-bm-open-np aria-label="Abrir Now Playing">${bmImg(t.image, "bm-hero-cover", t.album)}</button>
+      <div class="bm-hero-meta">
+        <div class="bm-hero-kicker">${s.playing ? "Sonando ahora" : "En pausa"}${s.device ? ` · ${escHtml(s.device.name)}` : ""}</div>
+        <div class="bm-hero-title">${escHtml(t.name)}</div>
+        <div class="bm-hero-sub">${escHtml(t.artists)}${t.album ? ` · ${escHtml(t.album)}` : ""}</div>
+        <div class="bm-hero-actions">
+          <button type="button" class="bm-btn-primary" data-bm-cmd="${s.playing ? "pause" : "play"}">${bmIcon(s.playing ? "pause" : "play")}<span>${s.playing ? "Pausar" : "Reanudar"}</span></button>
+          <button type="button" class="bm-btn-ghost bm-btn-icon ${s.shuffleState ? "is-on" : ""}" data-bm-shuffle aria-pressed="${s.shuffleState ? "true" : "false"}">${bmIcon("shuffle")}<span>Aleatorio</span></button>
+          <button type="button" class="bm-btn-ghost bm-btn-icon" data-bm-devsheet>${bmIcon("devices")}<span>Dispositivo</span></button>
+        </div>
+      </div>`;
+  }
+
+  function bmRenderHome(view) {
+    const s = bm.status;
+    if (!s) {
+      view.innerHTML = `<div class="bm-hero bm-skel"></div>${bmSkeletonCards(4)}`;
+      return;
+    }
+    if (!s.configured || !s.connected) {
+      view.innerHTML = bmConnectCard(s);
+      return;
+    }
+    const missing = Array.isArray(s.missingScopes) ? s.missingScopes : [];
+    view.innerHTML = `
+      ${missing.length ? `<div class="bm-banner"><span>Reconecta Spotify desde esta pantalla para activar guardar favoritos, editar playlists y el reproductor propio de BMO.</span><button type="button" class="bm-btn-ghost" data-bm-connect>Reconectar</button></div>` : ""}
+      <section class="bm-hero" id="bm-hero"></section>
+      <div class="bm-quick">
+        <button type="button" data-bm-view="search">⌕ Buscar música</button>
+        <button type="button" data-bm-view="library" data-bm-lib-tab="saved">♥ Favoritos</button>
+        <button type="button" data-bm-view="devices">◉ Dispositivos</button>
+      </div>
+      <h2 class="bm-h2">Tus playlists</h2>
+      <div class="bm-grid" id="bm-home-playlists">${bm.playlists ? bmPlaylistCards(bmOrderPinned(bm.playlists).slice(0, 8)) : bmSkeletonCards(4)}</div>`;
+    bmRenderHero();
+    if (!bm.playlists) {
+      bmLoadPlaylists().then(() => {
+        const grid = bmEl("bm-home-playlists");
+        if (!grid) return;
+        grid.innerHTML = bm.playlists ? bmPlaylistCards(bmOrderPinned(bm.playlists).slice(0, 8)) : bmErrorBox(bm.libError);
+      });
+    }
+  }
+
+  const BM_LIB_SORTS = {
+    playlists: [["recent", "Recientes"], ["az", "A–Z"], ["tracks", "Nº de canciones"]],
+    saved: [["recent", "Añadidas recientemente"], ["az", "Título A–Z"], ["artist", "Artista"]],
+  };
+
+  function bmLibSortState() {
+    if (!bm.libSort) {
+      const saved = bmStore(BM_SORT_KEY, {});
+      bm.libSort = { playlists: "recent", saved: "recent", ...(saved && typeof saved === "object" ? saved : {}) };
+    }
+    return bm.libSort;
+  }
+
+  function bmLibList() {
+    const q = String(bm.libFilter || "").trim().toLowerCase();
+    const sort = bmLibSortState()[bm.libTab];
+    const byName = (a, b) => String(a.name || "").localeCompare(String(b.name || ""), "es");
+    if (bm.libTab === "playlists") {
+      let list = (bm.playlists || []).filter((pl) => !q || `${pl.name} ${pl.owner || ""}`.toLowerCase().includes(q));
+      if (sort === "az") list = list.slice().sort(byName);
+      else if (sort === "tracks") list = list.slice().sort((a, b) => (b.tracksTotal || 0) - (a.tracksTotal || 0));
+      return bmOrderPinned(list);
+    }
+    let list = (bm.saved || []).filter((t) => !q || `${t.name} ${t.artists} ${t.album}`.toLowerCase().includes(q));
+    if (sort === "az") list = list.slice().sort(byName);
+    else if (sort === "artist") list = list.slice().sort((a, b) => String(a.artists || "").localeCompare(String(b.artists || ""), "es"));
+    return list;
+  }
+
+  function bmFillLibrary() {
+    const body = bmEl("bm-lib-body");
+    if (!body || bm.view !== "library") return;
+    const isPl = bm.libTab === "playlists";
+    const loaded = isPl ? bm.playlists : bm.saved;
+    if (!loaded) {
+      body.innerHTML = bm.libError ? bmErrorBox(bm.libError) : isPl ? `<div class="bm-grid">${bmSkeletonCards(6)}</div>` : bmSkeletonRows(6);
+      return;
+    }
+    const list = bmLibList();
+    if (!list.length) {
+      body.innerHTML = bm.libFilter
+        ? `<p class="bm-empty">Nada coincide con “${escHtml(bm.libFilter)}”.</p>`
+        : `<p class="bm-empty">${isPl ? "No hay playlists en tu cuenta." : "Todavía no hay favoritos."}</p>`;
+      return;
+    }
+    const count = bm.libFilter ? `<p class="bm-lib-count">${list.length} de ${loaded.length}</p>` : "";
+    if (isPl) {
+      body.innerHTML = `${count}<div class="bm-grid">${bmPlaylistCards(list)}</div>`;
+      return;
+    }
+    const partial = bm.savedNext != null;
+    const head = `<div class="bm-fav-head">${bmIcon("heartFill")}<span><strong>${bm.savedTotal}</strong> canciones que te gustan${partial ? ` · ${loaded.length} cargadas` : ""}</span></div>`;
+    const hint = partial && (bm.libFilter || bmLibSortState().saved !== "recent")
+      ? `<p class="bm-note">El filtro y el orden solo miran las ${loaded.length} canciones cargadas. <button type="button" class="bm-link" data-bm-saved-all>Cargar todas</button></p>`
+      : "";
+    const more = partial
+      ? `<div class="bm-more" id="bm-saved-more">${bm.savedAll ? `Cargando… ${loaded.length} de ${bm.savedTotal}` : `<button type="button" class="bm-btn-ghost" data-bm-saved-more>Cargar 50 más</button><button type="button" class="bm-btn-ghost" data-bm-saved-all>Cargar todas</button>`}</div>`
+      : "";
+    body.innerHTML = `${head}${hint}${count}${bmTrackRows(list, "saved")}${more}`;
+    // La siguiente página se carga sola al bajar (ver listener de scroll).
+  }
+
+  function bmRenderLibrary(view) {
+    const tab = bm.libTab;
+    const cur = bmLibSortState()[tab];
+    view.innerHTML = `
+      <div class="bm-tabs">
+        <button type="button" class="bm-tab ${tab === "playlists" ? "active" : ""}" data-bm-lib-tab="playlists">Playlists</button>
+        <button type="button" class="bm-tab ${tab === "saved" ? "active" : ""}" data-bm-lib-tab="saved">Favoritos</button>
+      </div>
+      <div class="bm-libbar">
+        <input id="bm-lib-filter" type="search" placeholder="${tab === "playlists" ? "Filtrar playlists" : "Filtrar favoritos"}" value="${escHtml(bm.libFilter)}" autocomplete="off" />
+        <select id="bm-lib-sort" aria-label="Ordenar">${BM_LIB_SORTS[tab]
+          .map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${l}</option>`)
+          .join("")}</select>
+      </div>
+      <div id="bm-lib-body"></div>`;
+    const loaded = tab === "playlists" ? bm.playlists : bm.saved;
+    if (!loaded) bm.libError = "";
+    bmFillLibrary();
+    if (!loaded) {
+      (tab === "playlists" ? bmLoadPlaylists() : bmLoadSaved()).then(() => {
+        if (bm.libTab === tab) bmFillLibrary();
+      });
+    } else if (tab === "saved") {
+      bmRefreshSaved(15000).then((changed) => {
+        if (changed && bm.view === "library" && bm.libTab === "saved") bmFillLibrary();
+      });
+    }
+  }
+
+  function bmRenderSearch(view) {
+    view.innerHTML = `
+      <div class="bm-search">
+        <span class="bm-search-ico">⌕</span>
+        <input id="bm-search-input" type="search" placeholder="Canciones, artistas, álbumes o playlists" value="${escHtml(bm.searchQ)}" autocomplete="off" />
+        <button type="button" class="bm-search-clear" data-bm-search-clear aria-label="Borrar">✕</button>
+      </div>
+      <div id="bm-search-body"></div>`;
+    bmRenderSearchBody();
+  }
+
+  function bmRenderSearchBody() {
+    const body = bmEl("bm-search-body");
+    if (!body) return;
+    if (!bm.searchQ) {
+      const history = bmStore(BM_HISTORY_KEY, []);
+      body.innerHTML = history.length
+        ? `<h2 class="bm-h2">Búsquedas recientes</h2><div class="bm-chips">${history
+            .map((h) => `<button type="button" class="bm-chip" data-bm-history="${escHtml(h)}">${escHtml(h)}</button>`)
+            .join("")}</div>`
+        : `<p class="bm-empty">Busca lo que quieras escuchar y BMO lo pondrá en tu dispositivo.</p>`;
+      return;
+    }
+    if (bm.searchRes === "loading") {
+      body.innerHTML = bmSkeletonRows(5);
+      return;
+    }
+    if (bm.searchRes && bm.searchRes.error) {
+      body.innerHTML = bmErrorBox(bm.searchRes.error);
+      return;
+    }
+    const r = bm.searchRes;
+    if (!r) {
+      body.innerHTML = "";
+      return;
+    }
+    const total = r.tracks.length + r.artists.length + r.albums.length + r.playlists.length;
+    if (!total) {
+      body.innerHTML = `<p class="bm-empty">Sin resultados para “${escHtml(bm.searchQ)}”.</p>`;
+      return;
+    }
+    body.innerHTML = `
+      ${r.tracks.length ? `<h2 class="bm-h2">Canciones</h2>${bmTrackRows(r.tracks, "search")}` : ""}
+      ${
+        r.artists.length
+          ? `<h2 class="bm-h2">Artistas</h2><div class="bm-hscroll">${r.artists
+              .map(
+                (a) => `<button type="button" class="bm-artist" data-bm-artist="${escHtml(a.id)}">${bmImg(a.image, "bm-artist-img", a.name)}<span>${escHtml(a.name)}</span></button>`
+              )
+              .join("")}</div>`
+          : ""
+      }
+      ${
+        r.albums.length
+          ? `<h2 class="bm-h2">Álbumes</h2><div class="bm-grid">${bmAlbumCards(r.albums)}</div>`
+          : ""
+      }
+      ${r.playlists.length ? `<h2 class="bm-h2">Playlists</h2><div class="bm-grid">${bmPlaylistCards(r.playlists)}</div>` : ""}`;
+  }
+
+  function bmSearchInput(value) {
+    bm.searchQ = String(value || "").trim();
+    clearTimeout(bm.searchTimer);
+    if (!bm.searchQ) {
+      bm.searchRes = null;
+      bmRenderSearchBody();
+      return;
+    }
+    bm.searchTimer = setTimeout(() => bmDoSearch(bm.searchQ), 450);
+  }
+
+  async function bmDoSearch(q) {
+    const seq = ++bm.searchSeq;
+    bm.searchRes = "loading";
+    bmRenderSearchBody();
+    try {
+      const r = await api(`/api/spotify/search?q=${encodeURIComponent(q)}`);
+      if (seq !== bm.searchSeq) return;
+      bm.searchRes = r;
+      const history = [q, ...bmStore(BM_HISTORY_KEY, []).filter((h) => String(h).toLowerCase() !== q.toLowerCase())].slice(0, 8);
+      bmSave(BM_HISTORY_KEY, history);
+    } catch (err) {
+      if (seq !== bm.searchSeq) return;
+      bm.searchRes = { error: err.message };
+    }
+    bmRenderSearchBody();
+  }
+
+  const BM_DEVICE_ICONS = { Computer: "💻", Smartphone: "📱", Tablet: "📱", Speaker: "🔊", AVR: "🔊", CastAudio: "🔊", TV: "📺", CastVideo: "📺" };
+
+  function bmDeviceListHtml(devs) {
+    if (!devs.length) {
+      return `<p class="bm-empty">No hay ningún dispositivo Spotify Connect disponible ahora mismo. Abre Spotify en el móvil, el PC o un altavoz y aparecerá aquí.</p>`;
+    }
+    return `<div class="bm-devices">${devs
+      .map((d) => {
+        const busy = bm.transferring === d.id;
+        return `<button type="button" class="bm-device ${d.isActive ? "is-active" : ""} ${busy ? "is-busy" : ""}" data-bm-device="${escHtml(d.id)}" ${d.isActive || bm.transferring ? "disabled" : ""}>
+              <span class="bm-device-ico">${BM_DEVICE_ICONS[d.type] || "🎵"}</span>
+              <span class="bm-device-text"><span class="bm-device-name">${escHtml(d.name)}</span><span class="bm-device-sub">${escHtml(d.type)}${d.isActive ? " · reproduciendo aquí" : ""}${d.volume != null ? ` · vol ${d.volume}%` : ""}</span></span>
+              <span class="bm-device-action">${busy ? "Cambiando…" : d.isActive ? "Activo" : "Usar"}</span>
+            </button>`;
+      })
+      .join("")}</div>`;
+  }
+
+  function bmRenderDevices(view) {
+    const s = bm.status;
+    if (!s || !s.connected) {
+      view.innerHTML = s ? bmConnectCard(s) : bmSkeletonRows(3);
+      return;
+    }
+    view.innerHTML = `
+      <h2 class="bm-h2">Spotify Connect</h2>
+      ${bm.devError ? `<p class="bm-dev-error" role="alert">${escHtml(bm.devError)}</p>` : ""}
+      ${bmDeviceListHtml(s.devices || [])}
+      <p class="bm-note">BMO todavía no aparece como dispositivo propio: eso llega en la fase de reproducción.</p>`;
+  }
+
+  // Selector rápido de dispositivo (hoja inferior), accesible desde el
+  // mini reproductor, el hero de Inicio y Now Playing.
+  function bmRenderDevSheet() {
+    const sheet = bmEl("bm-devsheet");
+    if (!sheet || sheet.hidden) return;
+    if (bm.sheet === "queue") return bmRenderQueueSheet(sheet);
+    if (bm.sheet === "playlists") return bmRenderPlaylistSheet(sheet);
+    sheet.setAttribute("aria-label", "Elegir dispositivo");
+    const s = bm.status || {};
+    sheet.innerHTML = `<div class="bm-sheet-backdrop" data-bm-close-sheet></div>
+      <div class="bm-sheet-card">
+        <div class="bm-sheet-head"><h2 class="bm-h2">Reproducir en…</h2><button type="button" class="bm-np-close" data-bm-close-sheet aria-label="Cerrar">${bmIcon("down")}</button></div>
+        ${bm.devError ? `<p class="bm-dev-error" role="alert">${escHtml(bm.devError)}</p>` : ""}
+        ${s.connected ? bmDeviceListHtml(s.devices || []) : `<p class="bm-empty">Spotify no está conectado.</p>`}
+      </div>`;
+  }
+
+  function bmOpenDevSheet() {
+    const sheet = bmEl("bm-devsheet");
+    if (!sheet) return;
+    bm.sheet = "devices";
+    bm.devError = "";
+    sheet.hidden = false;
+    bmRenderDevSheet();
+    bmRefresh();
+  }
+
+  function bmCloseDevSheet() {
+    const sheet = bmEl("bm-devsheet");
+    if (sheet) sheet.hidden = true;
+  }
+
+  // ---- Cola (KAN-398): solo lectura + añadir. La Web API de Spotify no
+  // permite quitar ni reordenar elementos de la cola.
+  function bmRenderQueueSheet(sheet) {
+    sheet.setAttribute("aria-label", "Cola de reproducción");
+    const q = bm.queue;
+    let body;
+    if (!q || q === "loading") body = bmSkeletonRows(5);
+    else if (q.error) body = bmErrorBox(q.error);
+    else {
+      const next = (q.queue || []).filter(Boolean).slice(0, 20);
+      const row = (t) => `<div class="bm-row bm-row-static">${bmImg(t.image, "bm-row-img", t.album)}<span class="bm-row-text"><span class="bm-row-title">${escHtml(t.name)}</span><span class="bm-row-sub">${escHtml(t.artists)}</span></span><span class="bm-row-dur">${t.durationMs ? fmtMs(t.durationMs) : ""}</span></div>`;
+      body = `${q.currentlyPlaying ? `<h3 class="bm-h3">Sonando</h3><div class="bm-rows">${row(q.currentlyPlaying)}</div>` : ""}
+        <h3 class="bm-h3">A continuación</h3>
+        ${next.length ? `<div class="bm-rows">${next.map(row).join("")}</div>` : `<p class="bm-empty">La cola está vacía.</p>`}
+        <p class="bm-note">Añade canciones con el botón + de cualquier lista. Spotify no deja quitar ni reordenar la cola desde otras apps.</p>`;
+    }
+    sheet.innerHTML = `<div class="bm-sheet-backdrop" data-bm-close-sheet></div>
+      <div class="bm-sheet-card">
+        <div class="bm-sheet-head"><h2 class="bm-h2">Cola</h2><button type="button" class="bm-np-close" data-bm-close-sheet aria-label="Cerrar">${bmIcon("down")}</button></div>
+        ${body}
+      </div>`;
+  }
+
+  async function bmLoadQueue() {
+    bm.queue = "loading";
+    bmRenderDevSheet();
+    try {
+      bm.queue = await api("/api/spotify/queue");
+    } catch (err) {
+      bm.queue = { error: err.message };
+    }
+    bmRenderDevSheet();
+  }
+
+  function bmOpenQueue() {
+    const sheet = bmEl("bm-devsheet");
+    if (!sheet) return;
+    bm.sheet = "queue";
+    sheet.hidden = false;
+    bmLoadQueue();
+  }
+
+  async function bmAddToQueue(uri) {
+    try {
+      await api("/api/spotify/queue", { method: "POST", body: JSON.stringify({ uri }) });
+      toast("Añadida a la cola");
+      const sheet = bmEl("bm-devsheet");
+      if (bm.sheet === "queue" && sheet && !sheet.hidden) bmLoadQueue();
+    } catch (err) {
+      toast(`BMO Music: ${err.message}`);
+    }
+  }
+
+  // ---- Páginas de artista y álbum (KAN-399) ----
+  function bmAlbumCards(list) {
+    if (!list.length) return `<p class="bm-empty">Sin discos.</p>`;
+    return list
+      .map(
+        (al) => `<button type="button" class="bm-card" data-bm-album="${escHtml(al.id)}">${bmImg(al.image, "bm-card-img", al.name)}<span class="bm-card-play" role="button" data-bm-quick-play="${escHtml(al.uri)}" aria-label="Reproducir ${escHtml(al.name)}">${bmIcon("play")}</span><span class="bm-card-title">${escHtml(al.name)}</span><span class="bm-card-sub">${al.type === "single" ? "Single" : escHtml(al.artists)}${al.year ? ` · ${al.year}` : ""}</span></button>`
+      )
+      .join("");
+  }
+
+  function bmOpenPage(type, id) {
+    if (!id) return;
+    const np = bmEl("bm-np");
+    if (np) np.hidden = true;
+    bmCloseDevSheet();
+    if (bm.view !== "artist" && bm.view !== "album") {
+      bm.prevView = bm.view;
+      bm.pageStack = [];
+    }
+    bm.pageStack.push({ type, id });
+    bmShowPage();
+  }
+
+  function bmPageBack() {
+    bm.pageStack.pop();
+    if (bm.pageStack.length) return bmShowPage();
+    bmSetView(bm.prevView || "home");
+  }
+
+  function bmShowPage() {
+    const top = bm.pageStack[bm.pageStack.length - 1];
+    bm.view = top.type;
+    document.querySelectorAll("#bmomusic-panel .bm-nav-btn").forEach((b) => b.classList.remove("active"));
+    const v = bmEl("bm-view");
+    if (v) v.scrollTop = 0;
+    bmRenderView();
+    const key = `${top.type}:${top.id}`;
+    if (bm.pageCache[key]) return;
+    api(`/api/spotify/${top.type}/${encodeURIComponent(top.id)}`)
+      .then((data) => {
+        bm.pageCache[key] = data;
+      })
+      .catch((err) => {
+        bm.pageCache[key] = { error: err.message };
+      })
+      .then(() => {
+        const cur = bm.pageStack[bm.pageStack.length - 1];
+        if (cur && `${cur.type}:${cur.id}` === key && bm.view === cur.type) bmRenderView();
+      });
+  }
+
+  function bmRenderPage(view) {
+    const top = bm.pageStack[bm.pageStack.length - 1];
+    if (!top) return bmSetView("home");
+    const key = `${top.type}:${top.id}`;
+    const data = bm.pageCache[key];
+    const back = `<button type="button" class="bm-page-back" data-bm-page-back aria-label="Volver">${bmIcon("back")}<span>Volver</span></button>`;
+    if (!data) {
+      view.innerHTML = `${back}<div class="bm-page-hero bm-skel"><span class="bm-page-img bm-page-skel"></span><span class="bm-skel-line"></span></div>${bmSkeletonRows(5)}`;
+      return;
+    }
+    if (data.error) {
+      delete bm.pageCache[key];
+      view.innerHTML = `${back}${bmErrorBox(data.error)}`;
+      return;
+    }
+    if (top.type === "artist") {
+      view.innerHTML = `${back}
+        <section class="bm-page-hero">
+          ${bmImg(data.image, "bm-page-img bm-page-img-round", data.name)}
+          <div class="bm-page-meta">
+            <div class="bm-page-kicker">Artista</div>
+            <h1 class="bm-page-title">${escHtml(data.name)}</h1>
+            <div class="bm-hero-actions"><button type="button" class="bm-btn-primary" data-bm-play-context="${escHtml(data.uri)}">${bmIcon("play")}<span>Reproducir</span></button>${bmLikeButton(data.uri, "artist")}</div>
+          </div>
+        </section>
+        ${data.tracks && data.tracks.length ? `<h2 class="bm-h2">Canciones</h2>${bmTrackRows(data.tracks, "artist")}` : ""}
+        <h2 class="bm-h2">Discografía${data.albumsTotal > (data.albums || []).length ? ` <span class="bm-h2-sub">${(data.albums || []).length} de ${data.albumsTotal}</span>` : ""}</h2>
+        <div class="bm-grid">${bmAlbumCards(data.albums || [])}</div>
+        ${(data.partialErrors || []).length ? `<p class="bm-note">No se pudo cargar: ${escHtml(data.partialErrors.join(" · "))}</p>` : ""}
+        <p class="bm-note">Spotify no deja a esta app ver las canciones más populares, los artistas relacionados ni los seguidores (modo desarrollo).</p>`;
+      return;
+    }
+    view.innerHTML = `${back}
+      <section class="bm-page-hero">
+        ${bmImg(data.image, "bm-page-img", data.name)}
+        <div class="bm-page-meta">
+          <div class="bm-page-kicker">${data.type === "single" ? "Single" : data.type === "compilation" ? "Recopilatorio" : "Álbum"}</div>
+          <h1 class="bm-page-title">${escHtml(data.name)}</h1>
+          ${data.artistId ? `<button type="button" class="bm-page-artist" data-bm-artist="${escHtml(data.artistId)}">${escHtml(data.artists)}</button>` : `<div class="bm-page-sub">${escHtml(data.artists)}</div>`}
+          <div class="bm-page-sub">${data.year || ""}${data.totalTracks ? ` · ${data.totalTracks} canciones` : ""}</div>
+          <div class="bm-hero-actions"><button type="button" class="bm-btn-primary" data-bm-play-context="${escHtml(data.uri)}">${bmIcon("play")}<span>Reproducir</span></button>${bmLikeButton(data.uri, "album")}</div>
+        </div>
+      </section>
+      ${bmTrackRows(data.tracks || [], "album")}
+      ${data.label ? `<p class="bm-note">${escHtml(data.label)}</p>` : ""}`;
+  }
+
+  function bmRenderView() {
+    const view = bmEl("bm-view");
+    if (!view) return;
+    if (bm.view === "artist" || bm.view === "album") return bmRenderPage(view);
+    if (bm.view === "search") bmRenderSearch(view);
+    else if (bm.view === "library") bmRenderLibrary(view);
+    else if (bm.view === "devices") bmRenderDevices(view);
+    else bmRenderHome(view);
+  }
+
+  function bmSetView(view) {
+    bm.view = view;
+    document.querySelectorAll("#bmomusic-panel .bm-nav-btn").forEach((b) => {
+      b.classList.toggle("active", b.dataset.bmView === view);
+    });
+    const v = bmEl("bm-view");
+    if (v) v.scrollTop = 0;
+    bmRenderView();
+  }
+
+  function bmRenderNowPlaying() {
+    const np = bmEl("bm-np");
+    if (!np || np.hidden) return;
+    const active = document.activeElement;
+    if (active && (active.id === "bm-seek" || active.id === "bm-volume")) return;
+    const s = bm.status || {};
+    const t = s.track;
+    const vis = bmStore(BM_VIS_KEY, true);
+    if (!t) {
+      np.innerHTML = `<div class="bm-np-inner">
+        <div class="bm-np-top"><button type="button" class="bm-np-close" data-bm-close-np aria-label="Cerrar">${bmIcon("down")}</button></div>
+        <div class="bm-state"><img src="./assets/bmo.webp" class="bm-state-bmo" alt="" /><h2>Nada sonando</h2><p>Elige algo en Inicio o en tu Biblioteca.</p></div>
+      </div>`;
+      return;
+    }
+    const dur = Number(t.durationMs) || 0;
+    const pos = bmProgress();
+    np.innerHTML = `
+      <div class="bm-np-bg" style="${bmBg(t.image)}"></div>
+      <div class="bm-np-inner ${s.playing ? "is-playing" : ""}">
+        <div class="bm-np-top">
+          <button type="button" class="bm-np-close" data-bm-close-np aria-label="Cerrar">${bmIcon("down")}</button>
+          <button type="button" class="bm-np-device" data-bm-devsheet aria-label="Cambiar dispositivo">${bmIcon("devices")}<span>${s.device ? escHtml(s.device.name) : "Elegir dispositivo"}</span></button>
+          <button type="button" class="bm-np-vis-toggle ${vis ? "is-on" : ""}" data-bm-vis-toggle aria-label="Visualizador">≋</button>
+        </div>
+        <div class="bm-np-cover-wrap">${bmImg(t.image, "bm-np-cover", t.album)}</div>
+        ${
+          vis
+            ? `<div class="bm-vis" aria-hidden="true">${Array.from({ length: 24 })
+                .map((_, i) => `<span style="animation-delay:${(i * 137) % 900}ms;animation-duration:${700 + ((i * 53) % 600)}ms"></span>`)
+                .join("")}</div>`
+            : ""
+        }
+        <div class="bm-np-meta">
+          <div class="bm-np-titlerow"><div class="bm-np-title">${escHtml(t.name)}</div>${bmHeart(t.uri, "bm-np-heart")}</div>
+          ${t.artistId ? `<button type="button" class="bm-np-artist bm-np-link" data-bm-artist="${escHtml(t.artistId)}">${escHtml(t.artists)}</button>` : `<div class="bm-np-artist">${escHtml(t.artists)}</div>`}
+          ${t.albumId ? `<button type="button" class="bm-np-album bm-np-link" data-bm-album="${escHtml(t.albumId)}">${escHtml(t.album)}</button>` : `<div class="bm-np-album">${escHtml(t.album)}</div>`}
+        </div>
+        <div class="bm-np-seek">
+          <input type="range" id="bm-seek" min="0" max="${dur}" value="${Math.floor(pos)}" step="1000" aria-label="Posición" />
+          <div class="bm-np-times"><span id="bm-np-pos">${fmtMs(pos)}</span><span>${fmtMs(dur)}</span></div>
+        </div>
+        <div class="bm-np-ctrls">
+          <button type="button" class="bm-ctrl ${s.shuffleState ? "is-on" : ""}" data-bm-shuffle aria-pressed="${s.shuffleState ? "true" : "false"}" aria-label="Aleatorio">${bmIcon("shuffle")}</button>
+          <button type="button" class="bm-ctrl" data-bm-cmd="previous" aria-label="Anterior">${bmIcon("prev")}</button>
+          <button type="button" class="bm-ctrl bm-ctrl-big" data-bm-cmd="${s.playing ? "pause" : "play"}" aria-label="${s.playing ? "Pausar" : "Reproducir"}">${bmIcon(s.playing ? "pause" : "play")}</button>
+          <button type="button" class="bm-ctrl" data-bm-cmd="next" aria-label="Siguiente">${bmIcon("next")}</button>
+          <button type="button" class="bm-ctrl ${s.repeatState && s.repeatState !== "off" ? "is-on" : ""}" data-bm-repeat aria-label="Repetir: ${s.repeatState === "track" ? "canción" : s.repeatState === "context" ? "lista" : "no"}">${bmIcon(s.repeatState === "track" ? "repeatOne" : "repeat")}</button>
+        </div>
+        <div class="bm-np-vol"><span>🔈</span><input type="range" id="bm-volume" min="0" max="100" value="${Number(s.volume) || 0}" aria-label="Volumen" /><span>🔊</span></div>
+        <div class="bm-np-extra"><button type="button" class="bm-btn-ghost bm-btn-icon" data-bm-addpl="${escHtml(t.uri)}">${bmIcon("playlistAdd")}<span>Playlist</span></button><button type="button" class="bm-btn-ghost bm-btn-icon" data-bm-queue-open>${bmIcon("queue")}<span>Cola</span></button><button type="button" class="bm-btn-ghost bm-btn-icon" data-bm-ambient>${bmIcon("ambient")}<span>Ambiente</span></button></div>
+      </div>`;
+  }
+
+  // ---- Biblioteca: Me gusta / Seguir / Guardar (KAN-399) ----
+  // Una consulta por elemento (no en cada sondeo): el resultado se guarda en
+  // bm.likes y solo cambia cuando el usuario pulsa el botón.
+  const BM_LIKE_TEXT = {
+    track: ["Me gusta", "Te gusta"],
+    artist: ["Seguir", "Siguiendo"],
+    album: ["Guardar", "Guardado"],
+  };
+
+  function bmLikeButton(uri, kind) {
+    if (!uri) return "";
+    const on = bm.likes[uri] === true;
+    const known = uri in bm.likes;
+    const [off, yes] = BM_LIKE_TEXT[kind] || BM_LIKE_TEXT.track;
+    if (!known) bmCheckLikes([uri]);
+    return `<button type="button" class="bm-btn-ghost bm-btn-icon bm-like ${on ? "is-on" : ""}" data-bm-like="${escHtml(uri)}" data-bm-like-kind="${kind}" aria-pressed="${on}" ${known ? "" : "disabled"}>${bmIcon(kind === "track" ? (on ? "heartFill" : "heart") : on ? "heartFill" : "plus")}<span>${on ? yes : off}</span></button>`;
+  }
+
+  async function bmCheckLikes(uris) {
+    // Tras un fallo no se reintenta durante 60 s (evita un bucle render->consulta).
+    const need = uris.filter((u) => u && !(u in bm.likes) && !bm.likeBusy[u] && !(bm.likeBusy["fail:" + u] > Date.now() - 60000));
+    if (!need.length) return;
+    need.forEach((u) => (bm.likeBusy[u] = true));
+    try {
+      const r = await api(`/api/spotify/library/contains?uris=${encodeURIComponent(need.join(","))}`);
+      Object.assign(bm.likes, (r && r.saved) || {});
+    } catch {
+      /* sin dato: el botón queda deshabilitado, no se inventa el estado */
+      need.forEach((u) => (bm.likeBusy["fail:" + u] = Date.now()));
+    } finally {
+      need.forEach((u) => delete bm.likeBusy[u]);
+    }
+    bmRenderLikeButtons();
+    bmSyncHearts();
+  }
+
+  function bmRenderLikeButtons() {
+    document.querySelectorAll("#bmomusic-panel [data-bm-like]").forEach((btn) => {
+      const tmp = document.createElement("div");
+      tmp.innerHTML = bmLikeButton(btn.dataset.bmLike, btn.dataset.bmLikeKind);
+      if (tmp.firstElementChild) btn.replaceWith(tmp.firstElementChild);
+    });
+  }
+
+  async function bmToggleLike(uri, kind) {
+    if (!(uri in bm.likes)) return;
+    const want = !bm.likes[uri];
+    try {
+      await api("/api/spotify/library", { method: "POST", body: JSON.stringify({ uri, saved: want }) });
+      bm.likes[uri] = want;
+      if (kind === "track") bm.savedSyncedAt = Date.now();
+      if (kind === "track" && bm.saved) {
+        if (want) {
+          const t = bm.trackIndex[uri];
+          if (t && !bm.saved.some((x) => x.uri === uri)) bm.saved.unshift(t);
+          bm.savedTotal += 1;
+        } else {
+          bm.saved = bm.saved.filter((x) => x.uri !== uri);
+          bm.savedTotal = Math.max(0, bm.savedTotal - 1);
+        }
+        if (bm.view === "library" && bm.libTab === "saved") bmFillLibrary();
+      }
+      const msg = {
+        track: want ? "Añadida a tus Me gusta" : "Quitada de tus Me gusta",
+        artist: want ? "Ahora sigues a este artista" : "Has dejado de seguirlo",
+        album: want ? "Álbum guardado en tu biblioteca" : "Álbum quitado de tu biblioteca",
+      };
+      toast(msg[kind] || msg.track);
+    } catch (err) {
+      toast(`BMO Music: ${err.message}`);
+    }
+    bmRenderLikeButtons();
+    bmSyncHearts();
+  }
+
+  // ---- Añadir a playlist (solo playlists propias o colaborativas) ----
+  function bmRenderPlaylistSheet(sheet) {
+    sheet.setAttribute("aria-label", "Añadir a playlist");
+    let body;
+    if (!bm.playlists) body = bm.libError ? bmErrorBox(bm.libError) : bmSkeletonRows(5);
+    else {
+      const own = bm.playlists.filter((p) => p.owned);
+      body = own.length
+        ? `<div class="bm-rows">${own
+            .map(
+              (p) => `<button type="button" class="bm-row" data-bm-addto="${escHtml(p.id)}">${bmImg(p.image, "bm-row-img", p.name)}<span class="bm-row-text"><span class="bm-row-title">${escHtml(p.name)}</span><span class="bm-row-sub">${p.tracksTotal || 0} canciones</span></span>${bmIcon("plus")}</button>`
+            )
+            .join("")}</div>`
+        : `<p class="bm-empty">No tienes playlists propias. Crea una en Spotify y aparecerá aquí.</p>`;
+    }
+    sheet.innerHTML = `<div class="bm-sheet-backdrop" data-bm-close-sheet></div>
+      <div class="bm-sheet-card">
+        <div class="bm-sheet-head"><h2 class="bm-h2">Añadir a playlist</h2><button type="button" class="bm-np-close" data-bm-close-sheet aria-label="Cerrar">${bmIcon("down")}</button></div>
+        ${body}
+      </div>`;
+  }
+
+  function bmOpenPlaylistSheet(uri) {
+    const sheet = bmEl("bm-devsheet");
+    if (!sheet || !uri) return;
+    bm.addUri = uri;
+    bm.sheet = "playlists";
+    sheet.hidden = false;
+    bmRenderDevSheet();
+    if (!bm.playlists) {
+      bm.libError = "";
+      bmLoadPlaylists().then(() => {
+        if (bm.sheet === "playlists") bmRenderDevSheet();
+      });
+    }
+  }
+
+  async function bmAddToPlaylist(playlistId) {
+    const uri = bm.addUri;
+    if (!uri) return;
+    try {
+      await api(`/api/spotify/playlist/${encodeURIComponent(playlistId)}/items`, { method: "POST", body: JSON.stringify({ uri }) });
+      const p = (bm.playlists || []).find((x) => x.id === playlistId);
+      if (p) p.tracksTotal = (p.tracksTotal || 0) + 1;
+      toast(`Añadida a «${p ? p.name : "tu playlist"}»`);
+      bmCloseDevSheet();
+    } catch (err) {
+      toast(`BMO Music: ${err.message}`);
+    }
+  }
+
+  async function bmRefresh() {
+    const wasConnected = Boolean(bm.status && bm.status.connected);
+    const hadStatus = Boolean(bm.status);
+    try {
+      const s = await api("/api/spotify/status");
+      // Justo después de una orden (aleatorio, repetir, volumen...) Spotify
+      // puede devolver la posición a 0 un instante aunque la canción siga
+      // sonando (visto en vivo con el Echo). Si es la misma canción y la orden
+      // no movía la posición, se ignora ese salto hacia atrás.
+      const prev = bm.status;
+      const sinceCmd = Date.now() - (bm.lastCmdAt || 0);
+      const movesPosition = ["seek", "previous", "next", "play-context"].includes(bm.lastCmd);
+      if (prev && prev.track && s && s.track && prev.track.uri === s.track.uri && sinceCmd < 8000 && !movesPosition) {
+        const expected = bmProgress();
+        if (Number(s.progressMs || 0) + 3000 < expected) s.progressMs = expected;
+      }
+      bm.status = s;
+      bm.syncedAt = Date.now();
+      if (s && s.track && s.track.uri) {
+        bm.trackIndex[s.track.uri] = s.track;
+        if (!(s.track.uri in bm.likes)) bmCheckLikes([s.track.uri]);
+      }
+      state.spotify = s;
+    } catch (err) {
+      bm.status = { connected: false, configured: true, error: err.message };
+    }
+    bmRenderChrome();
+    const panel = bmEl("bmomusic-panel");
+    if (!panel || panel.hidden) return;
+    const changed = !hadStatus || wasConnected !== Boolean(bm.status.connected);
+    if (changed || bm.view === "devices") bmRenderView();
+    else if (bm.view === "home") bmRenderHero();
+    bmRenderNowPlaying();
+    bmRenderDevSheet();
+    if (bm.ambient) bmRenderAmbient();
+    const favView = bmEl("bm-view");
+    if (bm.view === "library" && bm.libTab === "saved" && !bm.libFilter && favView && favView.scrollTop < 40) {
+      bmRefreshSaved(60000).then((changed) => {
+        if (changed && bm.view === "library" && bm.libTab === "saved") bmFillLibrary();
+      });
+    }
+  }
+
+  // onOk: aplica el estado confirmado por el backend (la orden ya devolvió
+  // éxito) mientras /me/player de Spotify tarda en reflejarlo; el siguiente
+  // sondeo real lo vuelve a sincronizar.
+  async function bmCmd(path, body, onOk) {
+    if (bm.busy) return;
+    bm.busy = true;
+    bm.lastCmd = path;
+    bm.lastCmdAt = Date.now();
+    try {
+      await api(`/api/spotify/${path}`, { method: "POST", body: JSON.stringify(body || {}) });
+      await bmRefresh();
+      if (onOk && bm.status) {
+        onOk();
+        bmRenderChrome();
+        if (bm.view === "home") bmRenderHero();
+        bmRenderNowPlaying();
+      }
+    } catch (err) {
+      toast(`BMO Music: ${err.message}`);
+    } finally {
+      bm.busy = false;
+    }
+  }
+
+  async function bmTransfer(deviceId) {
+    if (bm.transferring) return;
+    const d = ((bm.status && bm.status.devices) || []).find((x) => x.id === deviceId);
+    bm.transferring = deviceId;
+    bm.devError = "";
+    bmRenderDevSheet();
+    if (bm.view === "devices") bmRenderView();
+    try {
+      // El backend ya comprueba que el destino suena de verdad (y si no,
+      // devuelve la música al origen), así que aquí basta con una lectura.
+      await api("/api/spotify/device", { method: "POST", body: JSON.stringify({ deviceId }) });
+      await bmRefresh();
+      toast(`Música en ${d ? d.name : "el dispositivo elegido"}`);
+      bmCloseDevSheet();
+    } catch (err) {
+      bm.devError = err.message;
+      toast(`BMO Music: ${err.message}`);
+      await bmRefresh();
+    } finally {
+      bm.transferring = null;
+      bmRenderDevSheet();
+      bmRenderView();
+    }
+  }
+
+  function bmAmbientClock() {
+    return new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", hour12: false });
+  }
+
+  function bmVisHtml(n) {
+    return `<div class="bm-vis" aria-hidden="true">${Array.from({ length: n })
+      .map((_, i) => `<span style="animation-delay:${(i * 137) % 900}ms;animation-duration:${700 + ((i * 53) % 600)}ms"></span>`)
+      .join("")}</div>`;
+  }
+
+  function bmRenderAmbient() {
+    const el = bmEl("bm-ambient");
+    if (!el || el.hidden) return;
+    const s = bm.status || {};
+    const t = s.track;
+    if (!t) {
+      el.innerHTML = `<div class="bm-amb-inner"><div class="bm-amb-clock" id="bm-amb-clock">${bmAmbientClock()}</div><div class="bm-amb-artist">Nada sonando</div><div class="bm-amb-hint">Toca para volver</div></div>`;
+      return;
+    }
+    el.innerHTML = `<div class="bm-np-bg" style="${bmBg(t.image)}"></div>
+      <div class="bm-amb-inner ${s.playing ? "is-playing" : ""}">
+        <div class="bm-amb-clock" id="bm-amb-clock">${bmAmbientClock()}</div>
+        ${bmImg(t.image, "bm-amb-cover", t.album)}
+        <div class="bm-amb-title">${escHtml(t.name)}</div>
+        <div class="bm-amb-artist">${escHtml(t.artists)}${s.device ? ` · ${escHtml(s.device.name)}` : ""}</div>
+        ${bmStore(BM_VIS_KEY, true) ? bmVisHtml(32) : ""}
+        <div class="bm-amb-hint">Toca para volver</div>
+      </div>`;
+  }
+
+  function bmEnterAmbient() {
+    const panel = bmEl("bmomusic-panel");
+    if (!panel) return;
+    let el = bmEl("bm-ambient");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "bm-ambient";
+      el.className = "bm-ambient";
+      el.setAttribute("role", "dialog");
+      el.setAttribute("aria-label", "Modo ambiente");
+      panel.querySelector(".bm-app").appendChild(el);
+    }
+    bmCloseDevSheet();
+    bm.ambient = true;
+    el.hidden = false;
+    // Pantalla completa de verdad: tapa también la barra inferior de BMO OS.
+    document.body.classList.add("bm-ambient-on");
+    bmRenderAmbient();
+  }
+
+  function bmExitAmbient() {
+    bm.ambient = false;
+    bm.lastTouch = Date.now();
+    document.body.classList.remove("bm-ambient-on");
+    const el = bmEl("bm-ambient");
+    if (el) el.hidden = true;
+  }
+
+  function bmTick() {
+    const s = bm.status;
+    if (bm.ambient) {
+      const clock = bmEl("bm-amb-clock");
+      if (clock) clock.textContent = bmAmbientClock();
+    } else if (s && s.playing && Date.now() - bm.lastTouch > BM_AMBIENT_IDLE_MS) {
+      bmEnterAmbient();
+    }
+    if (!s || !s.track) return;
+    const dur = Number(s.track.durationMs) || 0;
+    const pos = bmProgress();
+    const fill = bmEl("bm-mini-fill");
+    if (fill && dur) fill.style.width = `${(pos / dur) * 100}%`;
+    const seek = bmEl("bm-seek");
+    if (seek && document.activeElement !== seek) seek.value = String(Math.floor(pos));
+    const label = bmEl("bm-np-pos");
+    if (label) label.textContent = fmtMs(pos);
+    if (s.playing && dur && pos >= dur && Date.now() - bm.lastEndRefresh > 5000) {
+      bm.lastEndRefresh = Date.now();
+      bmRefresh();
+    }
+  }
+
+  function bmStopTimers() {
+    clearInterval(bm.timer);
+    clearInterval(bm.tick);
+    bm.timer = null;
+    bm.tick = null;
+  }
+
+  async function openBmoMusic() {
+    const panel = bmEl("bmomusic-panel");
+    if (!panel) {
+      toast("BMO Music no cargado — recarga la página");
       return;
     }
     closeSysHub();
@@ -1135,36 +1925,233 @@
     closeEventsPanel();
     closeConfigPanel();
     setAppNav("servicios", { keepPanels: true });
-    els.spotifyPanel.hidden = false;
-    state.spotifyQueueData = null;
-    try {
-      await refreshSpotifyStatus();
-      renderSpotifyBody();
-      loadSpotifyTabData(state.spotifyTab || "cola").catch(() => {});
-    } catch (err) {
-      toast(err.message || "Error Spotify");
-    }
-    stopSpotifyPolling();
-    // 18/08/2026 - Bajado de 4s a 8s: el refresh() general del dashboard
-    // (cada 10s, siempre activo, no solo con el panel abierto) YA pide
-    // /api/spotify/status para la tarjeta de servicio - con el panel
-    // abierto sumaban ~21 peticiones/min a la Web API de Spotify, lo
-    // bastante para agotar su cuota real y devolver 429 QUOTA_EXCEEDED de
-    // verdad (confirmado en logs: 342 llamadas en 10 min, muy por encima
-    // de lo esperado). Con 8s la carga combinada baja a ~13-14/min.
-    state.spotifyTimer = setInterval(refreshSpotifyStatus, 8000);
+    panel.hidden = false;
+    bm.lastTouch = Date.now();
+    bmSetView(bm.view || "home");
+    bmStopTimers();
+    await bmRefresh();
+    bm.timer = setInterval(bmRefresh, 8000);
+    bm.tick = setInterval(bmTick, 1000);
   }
 
-  els.spotifyBack?.addEventListener("click", () => {
-    closeSpotifyPanel();
-    setAppNav("servicios");
-  });
-  els.spotifyPanel?.addEventListener("click", (e) => {
-    if (e.target === els.spotifyPanel) {
-      closeSpotifyPanel();
-      setAppNav("servicios");
+  function closeBmoMusic() {
+    if (bm) {
+      bmStopTimers();
+      bmExitAmbient();
     }
-  });
+    const panel = bmEl("bmomusic-panel");
+    if (panel) panel.hidden = true;
+    const np = bmEl("bm-np");
+    if (np) np.hidden = true;
+    bmCloseDevSheet();
+  }
+
+  // KAN-398 (F5): ¿puede este navegador reproducir Spotify (Widevine/EME)?
+  // Se comprueba una vez por carga y se informa al servidor; decide si BMO
+  // puede registrarse como dispositivo "BMO Music Player".
+  async function bmProbeWidevine() {
+    let widevine = false;
+    let error = null;
+    try {
+      if (!navigator.requestMediaKeySystemAccess) throw new Error("EME no disponible");
+      await navigator.requestMediaKeySystemAccess("com.widevine.alpha", [
+        {
+          initDataTypes: ["cenc"],
+          audioCapabilities: [{ contentType: 'audio/mp4; codecs="mp4a.40.2"' }],
+        },
+      ]);
+      widevine = true;
+    } catch (err) {
+      error = (err && (err.name || err.message)) || String(err);
+    }
+    bm.widevine = widevine;
+    try {
+      await api("/api/spotify/player/capability", { method: "POST", body: JSON.stringify({ widevine, error }) });
+    } catch {
+      /* diagnóstico opcional */
+    }
+    return widevine;
+  }
+  setTimeout(bmProbeWidevine, 4000);
+
+  (function bindBmoMusic() {
+    const panel = bmEl("bmomusic-panel");
+    if (!panel) return;
+    panel.addEventListener("click", (e) => {
+      if (e.target.closest("#bm-ambient")) return bmExitAmbient();
+      if (e.target.classList && e.target.classList.contains("bm-sheet-backdrop")) return bmCloseDevSheet();
+      const pinBtn = e.target.closest("[data-bm-pin]");
+      if (pinBtn && panel.contains(pinBtn)) {
+        e.stopPropagation();
+        const on = bmTogglePin(pinBtn.dataset.bmPin);
+        toast(on ? "Fijada arriba" : "Ya no está fijada");
+        if (bm.view === "library") bmFillLibrary();
+        else if (bm.view === "home") {
+          const grid = bmEl("bm-home-playlists");
+          if (grid && bm.playlists) grid.innerHTML = bmPlaylistCards(bmOrderPinned(bm.playlists).slice(0, 8));
+        }
+        return;
+      }
+      const heart = e.target.closest("[data-bm-heart]");
+      if (heart && panel.contains(heart)) {
+        e.stopPropagation();
+        if (!heart.classList.contains("is-unknown")) bmToggleLike(heart.dataset.bmHeart, "track");
+        return;
+      }
+      const qAdd = e.target.closest("[data-bm-queue-add]");
+      if (qAdd && panel.contains(qAdd)) {
+        e.stopPropagation();
+        return bmAddToQueue(qAdd.dataset.bmQueueAdd);
+      }
+      const quick = e.target.closest("[data-bm-quick-play]");
+      if (quick && panel.contains(quick)) {
+        e.stopPropagation();
+        return bmCmd("play-context", { contextUri: quick.dataset.bmQuickPlay }, () => toast("¡Tu música está preparada!"));
+      }
+      const btn = e.target.closest("button");
+      if (!btn || !panel.contains(btn)) return;
+      const d = btn.dataset;
+      if (btn.id === "bmomusic-back") {
+        closeBmoMusic();
+        setAppNav("servicios");
+        return;
+      }
+      if (d.bmLibTab) {
+        if (bm.libTab !== d.bmLibTab) bm.libFilter = "";
+        bm.libTab = d.bmLibTab;
+        if (!d.bmView) {
+          bmRenderView();
+          return;
+        }
+      }
+      if (d.bmView) return bmSetView(d.bmView);
+      if (d.bmCmd) return bmCmd(d.bmCmd);
+      if ("bmOpenNp" in d) {
+        const np = bmEl("bm-np");
+        np.hidden = false;
+        bmRenderNowPlaying();
+        return;
+      }
+      if ("bmCloseNp" in d) {
+        bmEl("bm-np").hidden = true;
+        return;
+      }
+      if (d.bmPlayContext) {
+        return bmCmd("play-context", { contextUri: d.bmPlayContext }, () => toast("¡Tu música está preparada!"));
+      }
+      if (d.bmPlayTrack) {
+        const [key, idx] = d.bmPlayTrack.split(":");
+        const uris = (bm.lists[key] || []).slice(Number(idx), Number(idx) + 50);
+        // "Tus me gusta": el backend la lanza dentro de esa lista (sigue con tus me gusta).
+        if (uris.length) return bmCmd("play-context", key === "saved" ? { uris, collection: true } : { uris });
+        return;
+      }
+      if (d.bmDevice) return bmTransfer(d.bmDevice);
+      if ("bmDevsheet" in d) return bmOpenDevSheet();
+      if ("bmQueueOpen" in d) return bmOpenQueue();
+      if ("bmAmbient" in d) return bmEnterAmbient();
+      if ("bmSavedMore" in d) return bmLoadMoreSaved().then((ok) => ok && bmFillLibrary());
+      if ("bmSavedAll" in d) return bmLoadAllSaved();
+      if (d.bmLike) return bmToggleLike(d.bmLike, d.bmLikeKind || "track");
+      if (d.bmAddpl) return bmOpenPlaylistSheet(d.bmAddpl);
+      if (d.bmAddto) return bmAddToPlaylist(d.bmAddto);
+      if (d.bmArtist) return bmOpenPage("artist", d.bmArtist);
+      if (d.bmAlbum) return bmOpenPage("album", d.bmAlbum);
+      if ("bmPageBack" in d) return bmPageBack();
+      if ("bmCloseSheet" in d) return bmCloseDevSheet();
+      if ("bmShuffle" in d) {
+        const want = !(bm.status && bm.status.shuffleState);
+        return bmCmd("shuffle", { state: want }, () => {
+          bm.status.shuffleState = want;
+          toast(want ? "Aleatorio activado" : "Aleatorio desactivado");
+        });
+      }
+      if ("bmRepeat" in d) {
+        const order = ["off", "context", "track"];
+        const labels = { off: "Repetir desactivado", context: "Repetir lista", track: "Repetir canción" };
+        const cur = (bm.status && bm.status.repeatState) || "off";
+        const want = order[(order.indexOf(cur) + 1) % order.length];
+        return bmCmd("repeat", { state: want }, () => {
+          bm.status.repeatState = want;
+          toast(labels[want]);
+        });
+      }
+      if ("bmConnect" in d) return connectSpotify();
+      if (d.bmHistory) {
+        bm.searchQ = d.bmHistory;
+        const input = bmEl("bm-search-input");
+        if (input) input.value = d.bmHistory;
+        return bmDoSearch(d.bmHistory);
+      }
+      if ("bmSearchClear" in d) {
+        bm.searchQ = "";
+        bm.searchRes = null;
+        const input = bmEl("bm-search-input");
+        if (input) {
+          input.value = "";
+          input.focus();
+        }
+        bmRenderSearchBody();
+        return;
+      }
+      if ("bmVisToggle" in d) {
+        bmSave(BM_VIS_KEY, !bmStore(BM_VIS_KEY, true));
+        bmRenderNowPlaying();
+      }
+    });
+    panel.addEventListener("input", (e) => {
+      if (e.target.id === "bm-search-input") bmSearchInput(e.target.value);
+      else if (e.target.id === "bm-lib-filter") {
+        bm.libFilter = e.target.value;
+        bmFillLibrary();
+      }
+    });
+    // Favoritos: al acercarse al final de la lista se carga la siguiente
+    // página (una cada vez; bmLoadMoreSaved ignora llamadas mientras carga).
+    const bmView = bmEl("bm-view");
+    if (bmView) {
+      bmView.addEventListener("scroll", () => {
+        if (bm.view !== "library" || bm.libTab !== "saved" || bm.savedAll || bm.savedNext == null) return;
+        if (bmView.scrollTop + bmView.clientHeight < bmView.scrollHeight - 400) return;
+        const keep = bmView.scrollTop;
+        bmLoadMoreSaved().then((ok) => {
+          if (!ok) return;
+          bmFillLibrary();
+          bmView.scrollTop = keep; // no saltar arriba al repintar
+        });
+      }, { passive: true });
+    }
+    // Cualquier toque reinicia la cuenta atrás del modo ambiente.
+    panel.addEventListener("pointerdown", () => {
+      bm.lastTouch = Date.now();
+    });
+    // F9: con la pantalla oculta no se sondea Spotify.
+    document.addEventListener("visibilitychange", () => {
+      const p = bmEl("bmomusic-panel");
+      if (!p || p.hidden) return;
+      if (document.hidden) bmStopTimers();
+      else if (!bm.timer) {
+        bmRefresh();
+        bm.timer = setInterval(bmRefresh, 8000);
+        bm.tick = setInterval(bmTick, 1000);
+      }
+    });
+    panel.addEventListener("change", (e) => {
+      if (e.target.id === "bm-seek") {
+        const value = Number(e.target.value);
+        e.target.blur();
+        bmCmd("seek", { positionMs: value });
+      } else if (e.target.id === "bm-lib-sort") {
+        bmLibSortState()[bm.libTab] = e.target.value;
+        bmSave(BM_SORT_KEY, bm.libSort);
+        bmFillLibrary();
+      } else if (e.target.id === "bm-volume") {
+        const value = Number(e.target.value);
+        e.target.blur();
+        bmCmd("volume", { volume: value });
+      }
+    });
+  })();
 
   function escHtml(s) {
     return String(s ?? "")
@@ -4526,6 +5513,9 @@
         status = sp.playing ? "reproduciendo" : "listo";
         ok = true;
       }
+    } else if (s.id === "pokemon") {
+      status = "listo";
+      ok = true;
     }
     const ico = s.iconImg
       ? `<div class="service-ico img-wrap"><img src="${s.iconImg}" alt="${s.name}" /></div>`
@@ -4595,6 +5585,11 @@
 
         if (id === "docker") {
           openDockerPanel().catch((err) => toast(err.message || "Error Docker"));
+          return;
+        }
+
+        if (id === "pokemon") {
+          openPokemonHomePanel().catch((err) => toast(err.message || "Error Pokémon"));
         }
       });
     });
@@ -5056,12 +6051,7 @@
 
     const dockerOnline = state.docker?.docker === "online";
     const dockerRunning = state.docker?.running;
-    const sp = state.spotify;
-    let spotifySub = "—";
-    if (!sp) spotifySub = "cargando…";
-    else if (!sp.configured) spotifySub = "sin config";
-    else if (!sp.connected) spotifySub = "desconectado";
-    else spotifySub = (sp.device && sp.device.name) || "conectado";
+    const spotifySub = spotifySubText(state.spotify);
 
     if (els.homeServices) {
       els.homeServices.innerHTML = `
@@ -5638,9 +6628,27 @@
         : `<p class="sic-sub">Sin datos</p>`;
 
       // 7.0.7 - Identidad real de BMO (version/motor de IA/agentes/autonomia).
+      // 7.1.20 (KAN-156) - Intelligence Dashboard: indicador real de
+      // Verificacion (7.1.5/7.1.16) - deliberadamente NO se muestra ningun
+      // indicador de "Self-Critique" (7.1.8 no existe todavia) - mostrar
+      // eso en verde seria falso, ver el propio KAN-156. total=0 en las
+      // ultimas 24h es un resultado bueno real, no "no funciona".
+      const verificationHtml = identity?.verification
+        ? `<p class="sic-sub">🔍 Verificación activa · ${identity.verification.last24h?.total ?? 0} avisos en 24h</p>`
+        : "";
+      // 7.1.x (KAN-157, follow-up de KAN-143/145) - a diferencia de
+      // verificationHtml (siempre activo), esto solo se muestra si el
+      // andamiaje de debate/confianza esta REALMENTE encendido ahora mismo
+      // (multiAgentEnabled) - apagado por defecto, mostrar "activo" sin
+      // serlo seria deshonesto.
+      const debateHtml = identity?.debate?.active
+        ? `<p class="sic-sub">🗣️ Multi-Agent Debate activo · ${identity.debate.last24h?.total ?? 0} turnos en 24h</p>`
+        : "";
       const identityHtml = identity
         ? `<p class="sic-sub">${escHtml(identity.name)} · v${escHtml(identity.coreVersion)} · activo ${Math.round((identity.uptimeSeconds || 0) / 60)} min</p>
-           <p class="sic-sub">🤖 ${escHtml(identity.ai?.provider || "—")}/${escHtml(identity.ai?.model || "—")} · agentes ${identity.agents?.ready ?? "—"}/${identity.agents?.total ?? "—"} · autonomía ${escHtml(identity.autonomy?.mode || "—")}</p>`
+           <p class="sic-sub">🤖 ${escHtml(identity.ai?.provider || "—")}/${escHtml(identity.ai?.model || "—")} · agentes ${identity.agents?.ready ?? "—"}/${identity.agents?.total ?? "—"} · autonomía ${escHtml(identity.autonomy?.mode || "—")}</p>
+           ${verificationHtml}
+           ${debateHtml}`
         : `<p class="sic-sub">Sin datos</p>`;
 
       // 7.0.22 - Puntuacion de salud numerica, con barra por categoria.
@@ -5745,6 +6753,254 @@
       els.brainBody.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
     }
   }
+
+  // —— BMO Voice F7 (KAN-412) ——
+  // Conversación con BMO usando el canal de voz del chat existente
+  // (/api/ai/chat channel:"voice") y su voz de Fish Audio
+  // (/api/bmo/voice/speak). Sin micrófono real todavía: se le escribe.
+  // La animación sigue la energía (RMS) del audio que de verdad suena.
+  // var (no const): closeAllSysPanels() puede llamar a closeBmoVoicePanel()
+  // durante el arranque, antes de llegar a esta línea (mismo caso que bm).
+  var bv = {
+    state: "idle",
+    lastUser: "",
+    lastReply: "",
+    emotion: null,
+    notices: [],
+    error: "",
+    busy: false,
+    ctx: null,
+    source: null,
+    raf: null,
+  };
+  const BV_STATE = {
+    idle: "Esperando",
+    thinking: "Pensando…",
+    speaking: "Hablando",
+    conversing: "Conversando",
+    sleeping: "Durmiendo",
+    error: "Error",
+  };
+  const BV_EMOTION = {
+    idle: "tranquilo",
+    happy: "contento",
+    very_happy: "muy feliz",
+    sad: "triste",
+    angry: "enfadado",
+    surprised: "sorprendido",
+    thinking: "pensando",
+    confused: "confundido",
+    excited: "emocionado",
+    laughing: "riéndose",
+    curious: "curioso",
+    sleeping: "durmiendo",
+  };
+
+  function bvEl(id) {
+    return document.getElementById(id);
+  }
+
+  function renderBmoVoice() {
+    const body = bvEl("bmovoice-body");
+    if (!body) return;
+    body.innerHTML = `
+      <div class="bv-stage" id="bv-stage">
+        <div class="bv-face-wrap" id="bv-face-wrap">
+          <img class="bv-face" src="./assets/bmo.webp" alt="BMO" />
+        </div>
+        <div class="bv-level" aria-hidden="true"><span id="bv-level-bar"></span></div>
+        <div class="bv-status"><span class="bv-dot"></span><span id="bv-status-text"></span></div>
+        <div class="bv-chips">
+          <span class="bv-chip off" title="El módulo Yahboom solo reconoce frases fijas; para frases libres hace falta un micrófono que la Pi reconozca">🎤 Sin micrófono</span>
+          <span class="bv-chip" id="bv-chip-voice">🔊 Voz de BMO</span>
+          <span class="bv-chip">🧠 IA</span>
+        </div>
+      </div>
+      <div class="bv-log">
+        <div class="bv-you" id="bv-you" hidden></div>
+        <div class="bv-bmo" id="bv-bmo" hidden></div>
+        <div class="bv-notice" id="bv-notice" hidden></div>
+      </div>
+      <form class="bv-input" id="bv-form" autocomplete="off">
+        <input id="bv-text" type="text" maxlength="500" placeholder="Escribe a BMO…" />
+        <button type="submit" class="dk-btn" id="bv-send">Hablar</button>
+      </form>
+      <p class="bv-note">Todavía sin micrófono: escríbele y BMO te contesta con su voz en el dispositivo donde tengas esta pantalla abierta. La cara es provisional hasta tener tus caras de Figma.</p>`;
+    bvEl("bv-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const t = bvEl("bv-text").value.trim();
+      if (!t || bv.busy) return;
+      bvEl("bv-text").value = "";
+      bmoVoiceSend(t);
+    });
+    bvUpdate();
+  }
+
+  function bvUpdate() {
+    const stage = bvEl("bv-stage");
+    if (!stage) return;
+    stage.className = `bv-stage bv-${bv.state} ${bv.emotion ? `bv-emo-${bv.emotion}` : ""}`;
+    bvEl("bv-status-text").textContent = `${BV_STATE[bv.state] || bv.state}${bv.emotion ? ` · ${BV_EMOTION[bv.emotion] || bv.emotion}` : ""}`;
+    const you = bvEl("bv-you");
+    you.hidden = !bv.lastUser;
+    you.textContent = bv.lastUser ? `Tú: ${bv.lastUser}` : "";
+    const me = bvEl("bv-bmo");
+    me.hidden = !bv.lastReply;
+    me.textContent = bv.lastReply ? `BMO: ${bv.lastReply}` : "";
+    const note = bvEl("bv-notice");
+    const msgs = [bv.error ? `⚠️ ${bv.error}` : "", ...(bv.notices || [])].filter(Boolean);
+    note.hidden = !msgs.length;
+    note.textContent = msgs.join("  ");
+    const send = bvEl("bv-send");
+    if (send) send.disabled = bv.busy;
+  }
+
+  function bvSetLevel(v) {
+    const bar = bvEl("bv-level-bar");
+    if (bar) bar.style.transform = `scaleX(${Math.max(0.02, Math.min(1, v))})`;
+    const face = bvEl("bv-face-wrap");
+    if (face) face.style.transform = `scale(${1 + Math.min(0.06, v * 0.08)})`;
+  }
+
+  function bvStopAudio() {
+    if (!bv) return;
+    if (bv.raf) clearInterval(bv.raf);
+    bv.raf = null;
+    try {
+      bv.source && bv.source.stop();
+    } catch {
+      /* ya parado */
+    }
+    bv.source = null;
+    bvSetLevel(0);
+  }
+
+  // Reproduce el MP3 con Web Audio (el AudioContext se activa en el gesto
+  // del usuario, así el navegador no bloquea el audio que llega segundos
+  // después) y anima según la energía real de lo que suena.
+  async function bvPlay(blob) {
+    const ctx = bv.ctx;
+    const buffer = await ctx.decodeAudioData(await blob.arrayBuffer());
+    const src = ctx.createBufferSource();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    src.buffer = buffer;
+    src.connect(analyser);
+    analyser.connect(ctx.destination);
+    bv.source = src;
+    const data = new Uint8Array(analyser.fftSize);
+    const tick = () => {
+      analyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) {
+        const x = (data[i] - 128) / 128;
+        sum += x * x;
+      }
+      bvSetLevel(Math.sqrt(sum / data.length) * 4);
+    };
+    return new Promise((resolve) => {
+      src.onended = () => {
+        bvStopAudio();
+        resolve();
+      };
+      src.start();
+      // Temporizador (no requestAnimationFrame): sigue midiendo aunque el
+      // navegador pause el pintado, y 20 lecturas/s bastan para la boca.
+      bv.raf = setInterval(tick, 50);
+    });
+  }
+
+  async function bmoVoiceSend(text) {
+    bv.busy = true;
+    bv.error = "";
+    bv.notices = [];
+    bv.lastUser = text;
+    bv.lastReply = "";
+    bv.state = "thinking";
+    bv.emotion = "thinking";
+    bvStopAudio();
+    // Dentro del gesto: crear/reanudar el AudioContext.
+    try {
+      bv.ctx = bv.ctx || new (window.AudioContext || window.webkitAudioContext)();
+      if (bv.ctx.state === "suspended") bv.ctx.resume();
+    } catch {
+      bv.ctx = null;
+    }
+    bvUpdate();
+    let reply;
+    try {
+      reply = await api("/api/ai/chat", { method: "POST", body: JSON.stringify({ message: text, channel: "voice" }) });
+    } catch (err) {
+      bv.state = "error";
+      bv.emotion = "confused";
+      bv.error = err.message || "La IA no responde";
+      bv.busy = false;
+      bvUpdate();
+      return;
+    }
+    if (reply.type === "confirmation_required") {
+      bv.state = "conversing";
+      bv.emotion = "curious";
+      bv.lastReply = "Para eso necesito que lo confirmes. Ábrelo en BMO AI y dale a confirmar.";
+      bv.busy = false;
+      bvUpdate();
+      return;
+    }
+    bv.lastReply = reply.text || "";
+    bv.emotion = reply.emotion || null;
+    bv.notices = reply.notices || [];
+    const end = Boolean(reply.endConversation);
+    const spoken = reply.spokenText || reply.text || "";
+    if (spoken && bv.ctx) {
+      bv.state = "speaking";
+      bvUpdate();
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/bmo/voice/speak`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-BMO-Key": API_KEY },
+          body: JSON.stringify({ text: spoken.slice(0, 500) }),
+        });
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(j.error || `Voz no disponible (HTTP ${res.status})`);
+        }
+        await bvPlay(await res.blob());
+      } catch (err) {
+        // La respuesta ya está en pantalla; solo falla la voz.
+        bv.error = err.message || "No se pudo generar la voz";
+      }
+    }
+    bv.state = end ? "sleeping" : "conversing";
+    if (end) bv.emotion = "sleeping";
+    bv.busy = false;
+    bvUpdate();
+  }
+
+  function closeBmoVoicePanel() {
+    const p = bvEl("bmovoice-panel");
+    if (p) p.hidden = true;
+    bvStopAudio();
+  }
+
+  function openBmoVoicePanel() {
+    const p = bvEl("bmovoice-panel");
+    if (!p) {
+      toast("BMO Voice no disponible — recarga la página");
+      return;
+    }
+    closeSysHub();
+    p.hidden = false;
+    if (bv.state === "sleeping" || bv.state === "error") bv.state = "idle";
+    renderBmoVoice();
+  }
+
+  bvEl("bmovoice-back")?.addEventListener("click", () => {
+    closeBmoVoicePanel();
+    openSysHub();
+  });
+  bvEl("bmovoice-panel")?.addEventListener("click", (e) => {
+    if (e.target === bvEl("bmovoice-panel")) closeBmoVoicePanel();
+  });
 
   async function openBrainPanel() {
     if (!els.brainPanel || !els.brainBody) {
@@ -7017,7 +8273,11 @@
       case "spotify": {
         const sp = state.spotify;
         let v = "Sin conectar";
-        if (sp?.connected) v = sp.playing ? "▶ Reproduciendo" : "⏸ Listo";
+        if (sp?.connected) {
+          const name = sp.track && sp.track.name ? String(sp.track.name) : "";
+          const short = name.length > 26 ? `${name.slice(0, 25)}…` : name;
+          v = sp.playing ? (short ? `▶ ${short}` : "▶ Reproduciendo") : "⏸ Listo";
+        }
         return { value: v, label: "Spotify" };
       }
       case "clock": {
@@ -7375,8 +8635,41 @@
         </div>`
       : `<div class="plugin-card"><strong>Escenas</strong><p class="sic-sub">Sin escenas creadas todavía — créalas en Sistema → Escenas</p></div>`;
 
-    els.quickMenuBody.innerHTML = statusHtml + scenesHtml;
+    const t = sp && sp.connected ? sp.track : null;
+    const musicHtml = t
+      ? `<div class="plugin-card qm-music" style="margin-bottom:10px">
+          <div class="qm-music-row">
+            ${t.image ? `<img class="qm-music-cover" src="${escHtml(t.image)}" alt="" />` : ""}
+            <div class="qm-music-text"><strong>${escHtml(t.name)}</strong><span>${escHtml(t.artists || "")}${sp.device ? ` · ${escHtml(sp.device.name)}` : ""}</span></div>
+          </div>
+          <div class="qm-music-ctrls">
+            <button type="button" data-qm-music="previous" aria-label="Anterior">${bmIcon("prev")}</button>
+            <button type="button" class="qm-main" data-qm-music="${sp.playing ? "pause" : "play"}" aria-label="${sp.playing ? "Pausar" : "Reproducir"}">${bmIcon(sp.playing ? "pause" : "play")}</button>
+            <button type="button" data-qm-music="next" aria-label="Siguiente">${bmIcon("next")}</button>
+            <button type="button" class="qm-open" data-qm-music="open">BMO Music</button>
+          </div>
+        </div>`
+      : "";
+
+    els.quickMenuBody.innerHTML = statusHtml + musicHtml + scenesHtml;
     bindSceneTiles(els.quickMenuBody, scenesArr);
+    els.quickMenuBody.querySelectorAll("[data-qm-music]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const action = btn.dataset.qmMusic;
+        if (action === "open") {
+          closeQuickMenuPanel();
+          openBmoMusic();
+          return;
+        }
+        try {
+          await api(`/api/spotify/${action}`, { method: "POST", body: "{}" });
+          await refreshSpotifyStatus();
+          renderQuickMenuBody();
+        } catch (err) {
+          toast(`BMO Music: ${err.message}`);
+        }
+      });
+    });
   }
 
   async function openQuickMenuPanel() {
@@ -7860,7 +9153,14 @@
       btn.classList.toggle("active", btn.getAttribute("data-events-filter") === filter);
     });
     let events = (state.eventsRecent && state.eventsRecent.events) || [];
-    if (filter !== "all") {
+    // 7.2.27 (KAN-185) - Multimodal Timeline: filtro real por eventos que ya
+    // vienen de una modalidad visual (camera.person_detected/camera.no_person,
+    // los unicos tipos reales que emite cameraTriggerService.js hoy) - no se
+    // inventa una fuente de eventos nueva, se filtra por tipo en vez de por
+    // nivel dentro del MISMO Event Center ya existente.
+    if (filter === "multimodal") {
+      events = events.filter((e) => String(e.type || "").startsWith("camera."));
+    } else if (filter !== "all") {
       events = events.filter((e) => String(e.level || "").toLowerCase() === filter);
     }
     if (!events.length) {
@@ -8724,6 +10024,53 @@
     </div>`;
   }
 
+  // KAN-32 - Geofencing literal: bloque real de "casa" (GPS), reusa las
+  // mismas clases integration-row/dk-btn que Security Center (KAN-322)
+  // - sin CSS nuevo. Solo se muestra si hay al menos un dispositivo con
+  // GPS real reportado (o si "casa" ya está definida, para poder
+  // borrarla). state.geofence viene de refreshDevicesPanel().
+  function geofenceBlockHtml(devices) {
+    const gf = state.geofence;
+    if (!gf) return "";
+    const gfDevices = gf.devices || {};
+
+    const homeRow = gf.home
+      ? `<div class="integration-row integration-row--stub">
+          <span class="integration-ico">🏠</span>
+          <span class="integration-info">
+            <span class="integration-name">Casa</span>
+            <span class="integration-detail">Radio ${escHtml(String(gf.home.radiusM))}m</span>
+          </span>
+          <button type="button" class="dk-btn ghost danger" data-geofence-clear>Borrar</button>
+        </div>`
+      : `<div class="integration-row integration-row--stub">
+          <span class="integration-ico">🏠</span>
+          <span class="integration-info">
+            <span class="integration-name">Casa</span>
+            <span class="integration-detail">Sin definir</span>
+          </span>
+          <input type="number" data-geofence-radius value="150" min="20" step="10" style="width:70px" title="Radio en metros" />
+          <button type="button" class="dk-btn ghost" data-geofence-set>📍 Usar mi ubicación actual</button>
+        </div>`;
+
+    const deviceRows = Object.entries(gfDevices)
+      .map(([id, d]) => {
+        const dev = devices.find((x) => x.id === id);
+        const name = dev ? dev.name || id : id;
+        const state2 = d.inside === true ? "Dentro" : d.inside === false ? "Fuera" : "Sin datos";
+        return `<div class="integration-row integration-row--stub">
+          <span class="integration-ico">📍</span>
+          <span class="integration-info">
+            <span class="integration-name">${escHtml(name)}</span>
+            <span class="integration-detail">${state2} · ${escHtml(String(d.distanceM))}m de casa</span>
+          </span>
+        </div>`;
+      })
+      .join("");
+
+    return `<div class="integrations-list" style="margin-top:12px">${homeRow}${deviceRows}</div>`;
+  }
+
   function renderDevicesPanel() {
     if (!els.devicesBody) return;
     const devices = (state.agentDevices && state.agentDevices.devices) || [];
@@ -8930,7 +10277,7 @@
         <h3>Permisos</h3>
         <div class="devices-perms">
           ${["metrics","power","apps","processes","wol"]
-            .concat(focus.type === "windows" ? ["monitors"] : [])
+            .concat(focus.type === "windows" ? ["monitors", "git"] : [])
             .concat((focus.capabilities || {}).remote_access ? ["remote_access"] : [])
             .map((k) =>
               `<label><input type="checkbox" data-perm="${k}" ${perms[k] ? "checked" : ""}/> ${k}</label>`
@@ -8956,7 +10303,49 @@
       </div>`;
     }
 
-    els.devicesBody.innerHTML = `${discoveryBlockHtml()}${groupsBlockHtml(devices)}<div class="devices-list">${listHtml}</div>${detail}`;
+    els.devicesBody.innerHTML = `${discoveryBlockHtml()}${groupsBlockHtml(devices)}<div class="devices-list">${listHtml}</div>${detail}${geofenceBlockHtml(devices)}`;
+
+    els.devicesBody.querySelectorAll("[data-geofence-set]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (!navigator.geolocation) {
+          toast("Este navegador no soporta geolocalización");
+          return;
+        }
+        btn.disabled = true;
+        btn.textContent = "Localizando…";
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const radiusInput = els.devicesBody.querySelector("[data-geofence-radius]");
+            const radiusM = radiusInput && radiusInput.value ? Number(radiusInput.value) : 150;
+            api("/api/system/geofence", {
+              method: "PUT",
+              body: JSON.stringify({ lat: pos.coords.latitude, lon: pos.coords.longitude, radiusM }),
+            })
+              .then(() => {
+                toast("Ubicación de casa guardada");
+                refreshDevicesPanel().catch(() => {});
+              })
+              .catch((err) => toast(err.message || "No se pudo guardar la ubicación"));
+          },
+          (err) => {
+            toast(err.message || "No se pudo obtener tu ubicación");
+            btn.disabled = false;
+            btn.textContent = "📍 Usar mi ubicación actual";
+          },
+          { enableHighAccuracy: true, timeout: 15000 }
+        );
+      });
+    });
+    els.devicesBody.querySelectorAll("[data-geofence-clear]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        api("/api/system/geofence", { method: "DELETE" })
+          .then(() => {
+            toast("Ubicación de casa borrada");
+            refreshDevicesPanel().catch(() => {});
+          })
+          .catch((err) => toast(err.message || "No se pudo borrar"));
+      });
+    });
 
     els.devicesBody.querySelectorAll("[data-agent-device]").forEach((btn) => {
       btn.addEventListener("click", (e) => {
@@ -9310,14 +10699,16 @@
   }
 
   async function refreshDevicesPanel() {
-    const [list, profiles, groups] = await Promise.all([
+    const [list, profiles, groups, geofence] = await Promise.all([
       api("/api/devices"),
       api("/api/devices/profiles").catch(() => ({ profiles: {} })),
       api("/api/devices/groups").catch(() => ({ groups: [] })),
+      api("/api/system/geofence").catch(() => null),
     ]);
     state.agentDevices = list;
     state.agentProfiles = profiles;
     state.deviceGroups = groups.groups || [];
+    state.geofence = geofence;
     const focusId = state.agentFocusId || "mi-pc";
     if (focusId === "mi-pc" || (list.devices || []).some((d) => d.id === focusId && !d.stub && d.type === "windows")) {
       state.agentProcesses = await api(`/api/devices/${focusId}/processes`).catch(() => ({
@@ -9361,6 +10752,11 @@
   // closeOverlayPanels() usan esta misma lista para no ir desincronizandose
   // cada vez que se anade un panel nuevo.
   function closeAllSysPanels() {
+    closeInfraMapPanel();
+    closeOfflineStatusPanel();
+    closeEcoDashboardPanel();
+    closeModosPanel();
+    closePersonalPanel();
     closePerfPanel();
     closeMonitorPanel();
     closePluginsPanel();
@@ -9401,7 +10797,18 @@
     closeRecoveryPanel();
     closeSecurityCenterPanel();
     closeBrainPanel();
+    closeBmoVoicePanel();
     closeSteamPanel();
+    closePokedexPanel();
+    closePokemonExplorePanel();
+    closePokebagPanel();
+    closePokemovesPanel();
+    closePokecarePanel();
+    closePokemedalsPanel();
+    closePokeprogressPanel();
+    closePokemonHomePanel();
+    closePokeeventsPanel();
+    closePokeboxPanel();
   }
 
   function openSysHub() {
@@ -9686,6 +11093,7 @@
     READY: { icon: "🟢", label: "Listo" },
     OFFLINE: { icon: "🔴", label: "Sin conexión" },
     PARKED: { icon: "🟡", label: "Aparcado" },
+    DISABLED: { icon: "⚪", label: "Desactivado" },
   };
 
   function aiToolFriendlyName(tool) {
@@ -9716,14 +11124,23 @@
   // real (una escena trae ademas su propio desglose sceneName/steps), asi
   // que una orden compuesta ("prepara todo para jugar") puede mostrar varios
   // pasos heterogeneos juntos en una sola tarjeta, no fragmentados.
+  // 7.1.8 (KAN-144) - Self-Critique: mismo lenguaje visual que el aviso de
+  // calidad de KAN-151 (.ai-quality-warning) - esto es "presta atención
+  // antes de confirmar", el mismo tipo de señal, no uno nuevo inventado
+  // solo para esto.
+  function aiSelfCritiqueHtml(step) {
+    if (!step.selfCritique || !step.selfCritique.length) return "";
+    return `<div class="ai-quality-warning">${step.selfCritique.map((w) => `<div>⚠️ ${escHtml(w)}</div>`).join("")}</div>`;
+  }
   function aiStepHtml(step) {
     if (step.sceneName) {
       return `<div class="ai-plan-step">
         <p class="tagline"><strong>${escHtml(step.sceneIcon || "")} ${escHtml(step.sceneName)}</strong></p>
+        ${aiSelfCritiqueHtml(step)}
         <ol class="ai-plan-steps">${(step.steps || []).map((s) => `<li>${escHtml(s)}</li>`).join("")}</ol>
       </div>`;
     }
-    return `<p class="ai-plan-step-label">• ${escHtml(step.label || aiToolFriendlyName(step.tool))}</p>`;
+    return `${aiSelfCritiqueHtml(step)}<p class="ai-plan-step-label">• ${escHtml(step.label || aiToolFriendlyName(step.tool))}</p>`;
   }
 
   function aiMsgBubbleHtml(entry) {
@@ -9744,7 +11161,68 @@
     }
     const cls = entry.role === "user" ? "user" : "bot";
     const proactiveCls = entry.proactive ? " proactive" : "";
-    return `<div class="ai-msg ${cls}${proactiveCls}">${escHtml(entry.text || "")}</div>`;
+    return `<div class="ai-msg ${cls}${proactiveCls}">${aiQualityWarningHtml(entry)}${escHtml(entry.text || "")}${aiSourcesFooterHtml(entry)}</div>`;
+  }
+
+  // 7.1.15 (KAN-151) - Response Quality Engine: hallucinationRisk/
+  // verifyMismatch (KAN-152/141) ya viajaban dentro de outcome.text como
+  // texto suelto - facil de pasar por alto. Esto NO es una comprobacion
+  // nueva, es la MISMA senal real ('qualityFlags', ver aiService.js)
+  // pintada como un aviso que no se puede ignorar, ANTES del texto de la
+  // respuesta en vez de enterrado despues. Solo estos dos flags porque son
+  // los unicos checks reales que existen hoy - fabricar una tarjeta de
+  // "seguridad"/"estilo" sin una comprobacion real detras seria mostrar
+  // algo que no corresponde, mismo criterio que BMO Brain (KAN-156) al NO
+  // mostrar un indicador falso de Self-Critique.
+  const AI_QUALITY_FLAG_META = {
+    hallucinationRisk: "⚠️ Podría no ser exacto — lenguaje de verificación sin una comprobación real este turno",
+    verifyMismatch: "⚠️ Números sin verificar — no coinciden con los datos reales consultados",
+  };
+  function aiQualityWarningHtml(entry) {
+    const flags = entry.qualityFlags || [];
+    if (!flags.length) return "";
+    const lines = flags.map((f) => AI_QUALITY_FLAG_META[f]).filter(Boolean);
+    if (!lines.length) return "";
+    return `<div class="ai-quality-warning">${lines.map((l) => `<div>${escHtml(l)}</div>`).join("")}</div>`;
+  }
+
+  // 7.1.6 (KAN-142) - Confidence & Sources: aiService.sendMessageNow ya
+  // adjunta 'confidence'/'sources' a la respuesta (datos reales que ya
+  // calculaba contextService y antes se tiraban) - esto solo los pinta, sin
+  // inventar nada nuevo. Mismo icono que ya usa el select de confidence en
+  // el Memory Explorer (⭐/🤔/❓), para no introducir un lenguaje visual
+  // distinto para el mismo concepto.
+  // 7.1.6 (KAN-142) - solo dos niveles reales (ver aiService.js
+  // computeAnswerConfidence): "high" = esfuerzo extra de verificacion para
+  // esta pregunta en concreto (tool call o coincidencia semantica fuerte),
+  // "medium" = respaldado por el snapshot general del sistema, no
+  // re-verificado ahora mismo. No hay un "sin fuente" honesto de mostrar -
+  // ver el comentario en buildSources() de por que se descarto.
+  const AI_CONFIDENCE_META = {
+    high: { icon: "🎯", label: "Verificado ahora" },
+    medium: { icon: "📋", label: "Según el estado general" },
+  };
+  function aiSourcesSummary(sources) {
+    if (!sources || !sources.length) return "";
+    const parts = [];
+    const tools = sources.find((s) => s.type === "tools");
+    if (tools) parts.push("📡 datos en vivo");
+    const memCount = sources.filter((s) => s.type === "memory").length;
+    if (memCount) parts.push(`🧠 memoria (${memCount})`);
+    const projCount = sources.filter((s) => s.type === "project").length;
+    if (projCount) parts.push(`📁 proyecto${projCount > 1 ? "s" : ""}`);
+    const docs = sources.filter((s) => s.type === "document");
+    if (docs.length) parts.push(`📚 ${docs.map((d) => d.label).join(", ")}`);
+    const ctx = sources.find((s) => s.type === "context");
+    if (ctx && !parts.length) parts.push("🖥️ estado del sistema");
+    return parts.join(" · ");
+  }
+  function aiSourcesFooterHtml(entry) {
+    if (!entry.confidence) return "";
+    const meta = AI_CONFIDENCE_META[entry.confidence];
+    if (!meta) return "";
+    const summary = aiSourcesSummary(entry.sources);
+    return `<div class="meta" style="margin-top:6px;opacity:0.75;font-size:12px">${meta.icon} ${meta.label}${summary ? " · " + escHtml(summary) : ""}</div>`;
   }
 
   function renderAiChatView() {
@@ -9831,7 +11309,8 @@
         <input type="checkbox" id="camera-trigger-enabled" ${status.enabled ? "checked" : ""} />
         Activada
       </label>
-      ${status.lastCheckAt ? `<p class="sic-sub">Última comprobación: ${escHtml(formatHistoryWhen(status.lastCheckAt))} · ${status.lastDetected == null ? "sin resultado" : status.lastDetected ? "👀 detectada" : "sin nadie"}</p>` : ""}`;
+      ${status.lastCheckAt ? `<p class="sic-sub">Última comprobación: ${escHtml(formatHistoryWhen(status.lastCheckAt))} · ${status.lastDetected == null ? "sin resultado" : status.lastDetected ? "👀 detectada" : "sin nadie"}</p>` : ""}
+      ${status.framesAnalyzed || status.framesSkipped ? `<p class="tagline">${status.framesAnalyzed} análisis reales · ${status.framesSkipped} ahorrados (frame casi igual al anterior, no se llamó al modelo de visión)</p>` : ""}`;
     document.getElementById("camera-trigger-enabled")?.addEventListener("change", async (e) => {
       try {
         await api("/api/system/camera-trigger", { method: "POST", body: JSON.stringify({ enabled: e.target.checked }) });
@@ -9840,6 +11319,204 @@
       } catch (err) {
         toast(err.message || "Error");
         e.target.checked = !e.target.checked;
+      }
+    });
+    renderCameraCaptureSettingsBlock();
+  }
+
+  // 7.2.9 (KAN-167) - Camera Manager (alcance acotado, ver visionService.js
+  // en el backend): resolucion/tiempo de calentamiento de la captura como
+  // capacidad real gestionable, no solo constantes fijas en el codigo.
+  async function renderCameraCaptureSettingsBlock() {
+    const el = document.getElementById("camera-capture-settings-block");
+    if (!el) return;
+    let settings;
+    try {
+      settings = await api("/api/system/camera-capture-settings");
+    } catch (err) {
+      el.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
+      return;
+    }
+    el.innerHTML = `
+      <strong>📷 Ajustes de captura</strong>
+      <p class="tagline">Resolución y tiempo de calentamiento reales que usa la cámara en cada captura (foto puntual o disparador).</p>
+      <label>Resolución
+        <select id="camera-capture-resolution">
+          ${settings.presets.map((p) => `<option value="${escHtml(p)}" ${p === settings.resolution ? "selected" : ""}>${escHtml(p)}</option>`).join("")}
+        </select>
+      </label>
+      <label>Tiempo de calentamiento (ms)
+        <input type="number" id="camera-capture-warmup" min="100" max="2000" step="50" value="${settings.warmupMs}" />
+      </label>
+      <button type="button" class="dk-btn" id="camera-capture-settings-save">Guardar</button>`;
+    document.getElementById("camera-capture-settings-save")?.addEventListener("click", async () => {
+      const resolution = document.getElementById("camera-capture-resolution").value;
+      const warmupMs = Number(document.getElementById("camera-capture-warmup").value);
+      try {
+        await api("/api/system/camera-capture-settings", { method: "POST", body: JSON.stringify({ resolution, warmupMs }) });
+        toast("Ajustes de captura guardados");
+        renderCameraCaptureSettingsBlock();
+      } catch (err) {
+        toast(err.message || "No se pudo guardar");
+      }
+    });
+  }
+
+  // 7.2.26 (KAN-184) - BMO Visual Interface: tarjeta real combinando
+  // camara/presencia/voz, con analisis BAJO DEMANDA (no automatico al
+  // abrir la pantalla, para no gastar una llamada real de vision cada vez).
+  const VISUAL_PRESENCE_META = {
+    PRESENT: { icon: "🟢", label: "Presente" },
+    AWAY: { icon: "⚪", label: "Ausente" },
+    UNKNOWN: { icon: "❔", label: "Desconocido" },
+  };
+  // BMO Voice F4 (KAN-409): clave de Fish Audio (cifrada en la Pi, nunca se
+  // vuelve a mostrar), voz elegida y prueba que se escucha en ESTE navegador.
+  async function renderBmoVoiceBlock() {
+    const el = document.getElementById("bmo-voice-block");
+    if (!el) return;
+    let v;
+    try {
+      v = await api("/api/bmo/voice/settings");
+    } catch (err) {
+      el.innerHTML = `<strong>🗣️ Voz de BMO</strong><p class="tagline">${escHtml(err.message || "Error")}</p>`;
+      return;
+    }
+    const models = (v.fishModels || [""]).map(
+      (m) => `<option value="${escHtml(m)}" ${m === v.fishModel ? "selected" : ""}>${m ? escHtml(m) : "Por defecto de Fish Audio"}</option>`
+    );
+    el.innerHTML = `
+      <strong>🗣️ Voz de BMO (Fish Audio)</strong>
+      <p class="tagline">Voz: <b>${escHtml(v.voiceName || "")}</b>. La clave se guarda cifrada en la Pi y nunca se vuelve a mostrar; el texto que BMO dice se envía a Fish Audio para generar la voz.</p>
+      <p class="sic-sub" id="bmo-voice-keystate">${v.hasKey ? `✅ Clave guardada (${escHtml(v.hint || "")})` : "⚠️ Sin clave: BMO todavía no puede hablar con su voz"}</p>
+      <label>Clave de API de Fish Audio ${v.hasKey ? "(deja en blanco para no cambiarla)" : ""}
+        <input type="password" id="bmo-voice-key" autocomplete="new-password" spellcheck="false" placeholder="${v.hasKey ? "••••••••" : "sk-fish-…"}" />
+      </label>
+      <div class="docker-actions">
+        <button type="button" class="dk-btn" id="bmo-voice-key-save">Guardar clave</button>
+        ${v.hasKey ? `<button type="button" class="dk-btn ghost" id="bmo-voice-key-del">Borrar clave</button>` : ""}
+      </div>
+      <label>Id de la voz (fish.audio/m/…)
+        <input type="text" id="bmo-voice-ref" value="${escHtml(v.referenceId || "")}" spellcheck="false" />
+      </label>
+      <label>Modelo de Fish Audio
+        <select id="bmo-voice-model">${models.join("")}</select>
+      </label>
+      <label>Velocidad <span id="bmo-voice-speed-val">${Number(v.speed).toFixed(2)}×</span>
+        <input type="range" id="bmo-voice-speed" min="0.5" max="2" step="0.05" value="${Number(v.speed)}" />
+      </label>
+      <label>Volumen <span id="bmo-voice-vol-val">${v.volumeDb > 0 ? "+" : ""}${v.volumeDb} dB</span>
+        <input type="range" id="bmo-voice-vol" min="-12" max="12" step="1" value="${Number(v.volumeDb)}" />
+      </label>
+      <button type="button" class="dk-btn ghost" id="bmo-voice-save">Guardar ajustes de voz</button>
+      <label style="margin-top:10px">Probar con esta frase
+        <input type="text" id="bmo-voice-text" maxlength="500" value="¡Holaaaa! ¡BMO está preparado para hablar contigo!" />
+      </label>
+      <button type="button" class="dk-btn" id="bmo-voice-test" ${v.hasKey ? "" : "disabled"}>▶ Probar voz</button>
+      <p class="tagline" id="bmo-voice-result"></p>`;
+
+    const $ = (id) => document.getElementById(id);
+    $("bmo-voice-speed")?.addEventListener("input", (e) => ($("bmo-voice-speed-val").textContent = `${Number(e.target.value).toFixed(2)}×`));
+    $("bmo-voice-vol")?.addEventListener("input", (e) => ($("bmo-voice-vol-val").textContent = `${e.target.value > 0 ? "+" : ""}${e.target.value} dB`));
+
+    $("bmo-voice-key-save")?.addEventListener("click", async () => {
+      const input = $("bmo-voice-key");
+      const key = (input.value || "").trim();
+      if (!key) return toast("Pega primero la clave");
+      try {
+        await api("/api/bmo/voice/key", { method: "PUT", body: JSON.stringify({ key }) });
+        input.value = ""; // no se queda en la pantalla
+        toast("Clave guardada");
+        renderBmoVoiceBlock();
+      } catch (err) {
+        toast(err.message || "Error");
+      }
+    });
+    $("bmo-voice-key-del")?.addEventListener("click", async () => {
+      try {
+        await api("/api/bmo/voice/key", { method: "DELETE" });
+        toast("Clave borrada");
+        renderBmoVoiceBlock();
+      } catch (err) {
+        toast(err.message || "Error");
+      }
+    });
+    $("bmo-voice-save")?.addEventListener("click", async () => {
+      try {
+        await api("/api/bmo/voice/settings", {
+          method: "PUT",
+          body: JSON.stringify({
+            referenceId: $("bmo-voice-ref").value,
+            fishModel: $("bmo-voice-model").value,
+            speed: Number($("bmo-voice-speed").value),
+            volumeDb: Number($("bmo-voice-vol").value),
+          }),
+        });
+        toast("Ajustes de voz guardados");
+      } catch (err) {
+        toast(err.message || "Error");
+      }
+    });
+    $("bmo-voice-test")?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      const out = $("bmo-voice-result");
+      btn.disabled = true;
+      out.textContent = "Generando la voz…";
+      try {
+        const r = await api("/api/bmo/voice/test", { method: "POST", body: JSON.stringify({ text: $("bmo-voice-text").value }) });
+        // El audio se pide con la cabecera de BMO y se reproduce aquí mismo.
+        const res = await fetch(`${API_BASE}/api/v1/bmo/voice/last-audio`, { headers: { "X-BMO-Key": API_KEY } });
+        if (!res.ok) throw new Error(`No se pudo descargar el audio (HTTP ${res.status})`);
+        const url = URL.createObjectURL(await res.blob());
+        const audio = new Audio(url);
+        audio.onended = () => URL.revokeObjectURL(url);
+        out.textContent = `✅ Generado en ${(r.ms / 1000).toFixed(1)} s (${Math.round(r.bytes / 1024)} KB). Sonando en este dispositivo…`;
+        await audio.play().catch(() => {
+          out.textContent += " (el navegador bloqueó la reproducción automática: pulsa de nuevo)";
+        });
+      } catch (err) {
+        out.textContent = `⚠️ ${err.message || "Error"}`;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
+  async function renderVisualInterfaceBlock() {
+    const el = document.getElementById("visual-interface-block");
+    if (!el) return;
+    let status;
+    try {
+      status = await api("/api/system/visual-interface");
+    } catch (err) {
+      el.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
+      return;
+    }
+    const presenceMeta = VISUAL_PRESENCE_META[status.presence] || VISUAL_PRESENCE_META.UNKNOWN;
+    el.innerHTML = `
+      <strong>👁️ Interfaz Visual</strong>
+      <p class="tagline">📷 Cámara: ${status.camera.enabled ? "activada" : "desactivada"}${
+        status.camera.enabled
+          ? ` · ${status.camera.lastDetected == null ? "sin resultado aún" : status.camera.lastDetected ? "detectada una persona" : "nadie detectado"}`
+          : ""
+      }</p>
+      <p class="tagline">${presenceMeta.icon} Presencia fusionada: <strong>${presenceMeta.label}</strong></p>
+      <p class="tagline">🎙️ Voz: no disponible (micrófono sin confirmar)</p>
+      <button type="button" class="dk-btn" id="visual-interface-analyze">¿Qué ves ahora?</button>
+      <div id="visual-interface-result"></div>`;
+    document.getElementById("visual-interface-analyze")?.addEventListener("click", async (e) => {
+      const btn = e.target;
+      btn.disabled = true;
+      btn.textContent = "Analizando…";
+      const resultEl = document.getElementById("visual-interface-result");
+      try {
+        const result = await api("/api/system/visual-interface/analyze", { method: "POST", body: JSON.stringify({}) });
+        resultEl.innerHTML = `<p class="sic-sub">${escHtml(result.description)}</p>`;
+      } catch (err) {
+        resultEl.innerHTML = `<p class="tagline">${escHtml(err.message || "No se pudo analizar")}</p>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "¿Qué ves ahora?";
       }
     });
   }
@@ -9883,8 +11560,12 @@
         <p class="tagline">Desactivada por defecto: un único agente responde cada turno (más barato y rápido). Activarla reparte la pregunta entre varios agentes en paralelo y combina sus respuestas — solo tiene sentido si de verdad quieres probar ese modo, tiene un coste real por turno.</p>
         <button type="submit" class="dk-btn">Guardar</button>
       </form>
+      <div id="bmo-voice-block" class="plugin-card" style="margin-top:12px"><p class="tagline">Cargando…</p></div>
+      <div id="privacy-mode-block" class="plugin-card" style="margin-top:12px"><p class="tagline">Cargando…</p></div>
       ${aiPreferencesFormHtml()}
       <div id="camera-trigger-block" class="plugin-card" style="margin-top:12px"><p class="tagline">Cargando…</p></div>
+      <div id="camera-capture-settings-block" class="plugin-card" style="margin-top:12px"><p class="tagline">Cargando…</p></div>
+      <div id="visual-interface-block" class="plugin-card" style="margin-top:12px"><p class="tagline">Cargando…</p></div>
       <div class="docker-actions" style="margin-top:12px">
         <button type="button" class="dk-btn ghost" id="ai-history-btn">📜 Ver historial</button>
         <button type="button" class="dk-btn ghost" id="ai-audit-btn">📋 Ver registro de auditoría</button>
@@ -9894,6 +11575,8 @@
         <button type="button" class="dk-btn ghost" id="ai-agents-btn">🤖 BMO AI Center</button>
       </div>`;
     renderCameraTriggerBlock();
+    renderVisualInterfaceBlock();
+    renderBmoVoiceBlock();
 
     document.getElementById("ai-history-btn")?.addEventListener("click", () => {
       state.aiView = "history";
@@ -9984,6 +11667,78 @@
         toast(err.message || "No se pudo guardar");
       }
     });
+
+    // 7.1.10 (KAN-146) - aplicar/descartar la sugerencia: aplicar es un
+    // cambio explicito de UN clic del usuario, no algo automatico.
+    document.getElementById("ai-pref-suggestion-dismiss")?.addEventListener("click", () => {
+      state.aiPreferenceSuggestions = [];
+      renderAiPanel();
+    });
+    document.querySelectorAll("[data-apply-suggestion]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const key = btn.getAttribute("data-apply-suggestion");
+        const value = btn.getAttribute("data-apply-value") === "true";
+        try {
+          const res = await api("/api/ai/preferences", { method: "POST", body: JSON.stringify({ [key]: value }) });
+          state.aiPreferences = res.preferences;
+          state.aiPreferenceSuggestions = [];
+          toast("Preferencia actualizada");
+          renderAiPanel();
+        } catch (err) {
+          toast(err.message || "No se pudo guardar");
+        }
+      });
+    });
+    renderPrivacyModeBlock();
+  }
+
+  // 7.2.24 (KAN-182) - Privacy Modes: 4 presets reales sobre mecanismos ya
+  // existentes (privacyMode/preferLocalModel/Vision Agent). El modo activo
+  // se deriva del estado real, nunca de un campo guardado aparte - si no
+  // coincide con ningun preset se muestra "personalizado", honestamente.
+  const PRIVACY_MODE_META = {
+    normal: { label: "Normal", desc: "Sin restricciones - todo como lo configures" },
+    private: { label: "Private", desc: "IA forzada local, nada bloqueado" },
+    full_privacy: { label: "Full Privacy", desc: "Bloquea procesos/logs/cámara + IA local" },
+    vision_only: { label: "Vision Only", desc: "Bloquea procesos/logs + IA local, cámara permitida" },
+    custom: { label: "Personalizado", desc: "Combinación manual, no coincide con ningún modo con nombre" },
+  };
+  async function renderPrivacyModeBlock() {
+    const el = document.getElementById("privacy-mode-block");
+    if (!el) return;
+    let modeState;
+    try {
+      modeState = await api("/api/ai/privacy-mode");
+    } catch (err) {
+      el.innerHTML = `<p class="tagline">${escHtml(err.message || "Error")}</p>`;
+      return;
+    }
+    el.innerHTML = `
+      <strong>🔐 Modo de privacidad</strong>
+      <p class="tagline">Actual: <strong>${escHtml(PRIVACY_MODE_META[modeState.mode]?.label || modeState.mode)}</strong> — ${escHtml(PRIVACY_MODE_META[modeState.mode]?.desc || "")}</p>
+      <div class="docker-actions">
+        ${["normal", "private", "full_privacy", "vision_only"]
+          .map(
+            (m) =>
+              `<button type="button" class="dk-btn ${m === modeState.mode ? "" : "ghost"}" data-privacy-mode="${m}">${escHtml(PRIVACY_MODE_META[m].label)}</button>`
+          )
+          .join("")}
+      </div>`;
+    el.querySelectorAll("[data-privacy-mode]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const mode = btn.getAttribute("data-privacy-mode");
+        try {
+          await api("/api/ai/privacy-mode", { method: "POST", body: JSON.stringify({ mode }) });
+          toast(`Modo ${PRIVACY_MODE_META[mode].label} aplicado`);
+          const prefs = await api("/api/ai/preferences");
+          state.aiPreferences = prefs.preferences;
+          state.aiPreferencesKnown = prefs.known;
+          renderAiSettingsView();
+        } catch (err) {
+          toast(err.message || "No se pudo cambiar el modo");
+        }
+      });
+    });
   }
 
   // 4.12.7 - memoria de preferencias no-personales: formulario generado a
@@ -10019,14 +11774,55 @@
             </select>
           </label>`;
         }
+        // 7.1.11 (KAN-147) - Adaptive Behavior: mismo criterio que
+        // proactivity - valores cerrados, select en vez de texto libre.
+        if (key === "verbosity") {
+          const options = [
+            ["concise", "Conciso (respuestas cortas)"],
+            ["normal", "Normal"],
+            ["detailed", "Detallado (más contexto)"],
+          ];
+          return `<label>${escHtml(meta.label)}
+            <select name="${escHtml(key)}">
+              ${options.map(([v, l]) => `<option value="${v}" ${value === v ? "selected" : ""}>${l}</option>`).join("")}
+            </select>
+          </label>`;
+        }
+        if (key === "tone") {
+          const options = [
+            ["normal", "Normal"],
+            ["urgent", "Urgente (sin bromas, directo)"],
+          ];
+          return `<label>${escHtml(meta.label)}
+            <select name="${escHtml(key)}">
+              ${options.map(([v, l]) => `<option value="${v}" ${value === v ? "selected" : ""}>${l}</option>`).join("")}
+            </select>
+          </label>`;
+        }
         return `<label>${escHtml(meta.label)}
           <input type="text" name="${escHtml(key)}" value="${escHtml(value || "")}" placeholder="(sin fijar)" />
         </label>`;
       })
       .join("");
+    // 7.1.10 (KAN-146) - banner de sugerencia basada en uso real, mismo
+    // patron que el aviso de conflictos de memoria (KAN-140): solo lectura,
+    // nunca cambia nada por su cuenta.
+    const suggestions = state.aiPreferenceSuggestions || [];
+    const suggestionsHtml = suggestions.length
+      ? `<div class="ai-memory-conflict" style="margin-bottom:10px">
+          ${suggestions
+            .map(
+              (s) => `<div style="flex:1 1 100%">💡 ${escHtml(s.message)}</div>
+            <button type="button" class="dk-btn ghost" data-apply-suggestion="${escHtml(s.key)}" data-apply-value="${escHtml(String(s.value))}">Sí, cambiarlo</button>`
+            )
+            .join("")}
+          <button type="button" class="dk-btn ghost" id="ai-pref-suggestion-dismiss" style="margin-top:6px">Ahora no</button>
+        </div>`
+      : "";
     return `<form id="ai-prefs-form" class="ai-settings-form" style="margin-top:18px">
       <h3 style="margin:0 0 4px;font-size:14px">Preferencias</h3>
       <p class="tagline" style="margin:0 0 4px">Configuración que BMO AI tiene en cuenta al responder (nada personal).</p>
+      ${suggestionsHtml}
       ${fields}
       <button type="submit" class="dk-btn">Guardar preferencias</button>
     </form>`;
@@ -10193,14 +11989,18 @@
     // que sys-list-row en vez de un diagrama con layout propio - honesto
     // con lo estrecha que es la pantalla del kiosco, 480px).
     const nodesById = Object.fromEntries((graph.nodes || []).map((n) => [n.id, n]));
-    const edgesByRelation = {};
-    for (const e of graph.edges || []) {
-      (edgesByRelation[e.relation] ||= []).push(e);
-    }
-    const graphGroups = Object.keys(edgesByRelation).length
-      ? Object.entries(edgesByRelation)
-          .map(
-            ([relation, edges]) => `
+    // 7.1.19 (KAN-155) - Personal Knowledge Graph: separa por 'domain'
+    // (bmo/user, ver knowledgeGraphService.js) ANTES de agrupar por
+    // relacion, en dos secciones con su propio titulo - la separacion que
+    // pide el spec es real, no solo un renombrado del bloque unico de
+    // antes.
+    function graphGroupsHtml(domainEdges) {
+      const edgesByRelation = {};
+      for (const e of domainEdges) (edgesByRelation[e.relation] ||= []).push(e);
+      if (!Object.keys(edgesByRelation).length) return null;
+      return Object.entries(edgesByRelation)
+        .map(
+          ([relation, edges]) => `
             <h4 style="margin:10px 0 4px;font-size:13px">${escHtml(GRAPH_RELATION_LABEL[relation] || relation)}</h4>
             ${edges
               .map((e) => {
@@ -10209,9 +12009,35 @@
                 return `<div class="sys-list-row"><span>${escHtml(from ? from.label : e.from)} → ${escHtml(to ? to.label : e.to)}</span></div>`;
               })
               .join("")}`
+        )
+        .join("");
+    }
+    const bmoEdges = (graph.edges || []).filter((e) => e.domain !== "user");
+    const userEdges = (graph.edges || []).filter((e) => e.domain === "user");
+    const bmoGroupsHtml = graphGroupsHtml(bmoEdges);
+    const userGroupsHtml = graphGroupsHtml(userEdges);
+    const graphGroups = `
+      <h4 style="margin:10px 0 4px;font-size:13px;opacity:.8">🤖 Conocimiento de BMO</h4>
+      ${bmoGroupsHtml || `<p class="tagline">Sin relaciones todavía — crea grupos de dispositivos, o escenas/automatizaciones para verlas aquí.</p>`}
+      <h4 style="margin:14px 0 4px;font-size:13px;opacity:.8">👤 Tu conocimiento</h4>
+      ${userGroupsHtml || `<p class="tagline">Sin relaciones todavía — crea proyectos con tecnologías, o guarda memoria/proyectos con descripción para verlas aquí.</p>`}`;
+    // 7.1.18 (KAN-154) - Temporal Knowledge: changeLog (projectKnowledgeService.js)
+    // solo existe cuando un campo cambio de verdad alguna vez - real, con
+    // fechas reales, no un placeholder.
+    function projectChangeLogHtml(changeLog) {
+      if (!changeLog || !changeLog.length) return "";
+      const fmt = (iso) => (iso ? new Date(iso).toLocaleDateString("es-ES") : "?");
+      return `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+        <strong>🕰️ Cambios anteriores</strong>
+        ${[...changeLog]
+          .reverse()
+          .map(
+            (c) =>
+              `<div class="meta" style="margin-top:2px">${escHtml(PROJECT_FIELD_LABEL[c.field] || c.field)} era "${escHtml(c.previousValue)}" (${fmt(c.validFrom)} → ${fmt(c.validUntil)})</div>`
           )
-          .join("")
-      : `<p class="tagline">Sin relaciones todavía — crea proyectos con tecnologías, grupos de dispositivos, o escenas/automatizaciones para verlas aquí.</p>`;
+          .join("")}
+      </div>`;
+    }
     const filledCount = (p) => Object.entries(p).filter(([k, v]) => projectKnowledgeFieldKeys.includes(k) && v).length;
     const projectRows = projects.length
       ? projects
@@ -10224,6 +12050,7 @@
               ${projectKnowledgeFieldKeys
                 .map((k) => `<div><strong>${escHtml(PROJECT_FIELD_LABEL[k] || k)}:</strong> ${escHtml(p[k] || "—")}</div>`)
                 .join("")}
+              ${projectChangeLogHtml(p.changeLog)}
             </div>`
           )
           .join("")
@@ -10388,13 +12215,14 @@
               </div>`
             : "";
         return `<div class="sys-list-row" data-agent-row="${escHtml(a.id)}" style="cursor:pointer">
-          <span>${AGENT_ICON[a.id] || "🤖"} <strong>${escHtml(a.name)}</strong> <span class="meta">${statusMeta.icon} ${statusMeta.label}</span></span>
+          <span>${AGENT_ICON[a.id] || "🤖"} <strong>${escHtml(a.name)}</strong>${a.protected ? ' <span class="meta">🔒 Protected</span>' : ""} <span class="meta">${statusMeta.icon} ${statusMeta.label}</span></span>
           <span class="docker-meta">${a.tools.length} tool(s)</span>
         </div>
         <div class="project-detail" id="agent-detail-${escHtml(a.id)}" hidden style="padding:8px 12px;font-size:13px">
           <p>${escHtml(a.description)}</p>
           <p><strong>Modelo:</strong> ${escHtml(a.model.provider || "—")} / ${escHtml(a.model.model || "—")}</p>
-          <p><strong>Permisos:</strong> ${escHtml(permHtml(a.permissions))}</p>
+          <p><strong>Permisos:</strong> ${escHtml(permHtml(a.permissions))}${a.protected ? " · 🔒 Protected (usa datos sensibles)" : ""}</p>
+          <p><button type="button" class="dk-btn ghost" data-agent-toggle="${escHtml(a.id)}">${a.enabled ? "Desactivar agente" : "Activar agente"}</button></p>
           ${activityHtml}
           ${a.can.length ? `<p><strong>Puede:</strong></p><ul>${a.can.map((c) => `<li>✓ ${escHtml(c)}</li>`).join("")}</ul>` : ""}
           ${a.cannot.length ? `<p><strong>No puede:</strong></p><ul>${a.cannot.map((c) => `<li>✗ ${escHtml(c)}</li>`).join("")}</ul>` : ""}
@@ -10440,6 +12268,22 @@
         toast(err.message || "No se pudo añadir");
       }
     });
+    els.aiBody.querySelectorAll("[data-agent-toggle]").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const id = btn.getAttribute("data-agent-toggle");
+        const a = agents.find((x) => x.id === id);
+        try {
+          await api(`/api/ai/agents/${id}/toggle`, {
+            method: "POST",
+            body: JSON.stringify({ enabled: !a.enabled }),
+          });
+          renderAiAgentsView();
+        } catch (err) {
+          toast(err.message || "No se pudo cambiar el estado del agente");
+        }
+      });
+    });
     els.aiBody.querySelectorAll("[data-coding-remove]").forEach((btn) => {
       btn.addEventListener("click", async (e) => {
         e.stopPropagation();
@@ -10472,6 +12316,17 @@
   // sin perder lo que el usuario ya escribio en la caja de busqueda.
   let aiMemoryQuery = "";
   let aiMemorySearchTimer = null;
+  // 7.1.4 (KAN-140) - Contradiction Detection: la deteccion (findConflicts,
+  // palabra clave, 6.7.13) y el aviso a la IA por chat ya existian - el
+  // hueco real era que guardar un dato aqui mismo, en la UI, sin pasar por
+  // el chat, no avisaba nunca aunque el backend ya devuelve `conflicts` en
+  // la respuesta del POST. Vive en el closure igual que aiMemoryQuery: solo
+  // dura mientras se ve esta pantalla, se limpia sola al volver/borrar.
+  let aiMemoryConflict = null;
+  // 7.1.3 (KAN-139) - Memory Consolidation: resultado del barrido bajo
+  // demanda sobre TODA la memoria (distinto de aiMemoryConflict, que solo
+  // reacciona a lo que se acaba de guardar este turno).
+  let aiMemoryDuplicateGroups = null;
 
   async function renderAiMemoryView() {
     els.aiBody.innerHTML = `<p class="tagline">Cargando...</p>`;
@@ -10500,7 +12355,13 @@
       ? facts
           .map(
             (f) => `<div class="sys-list-row" style="flex-wrap:wrap">
-              <span style="flex:1 1 100%">${escHtml(MEMORY_CATEGORY_LABEL[f.category] || f.category)}: ${escHtml(f.text)} ${matchBadge(f)}</span>
+              <span style="flex:1 1 100%">${escHtml(MEMORY_CATEGORY_LABEL[f.category] || f.category)}: ${escHtml(f.text)} ${matchBadge(f)}${
+                // 7.1.18 (KAN-154) - priorVersions solo existe si el texto
+                // cambio de verdad alguna vez (aiMemoryService.js).
+                f.priorVersions && f.priorVersions.length
+                  ? ` <span class="meta" title="${escHtml(f.priorVersions.map((v) => v.text).join(" → "))}">🕰️ ${f.priorVersions.length} versión${f.priorVersions.length > 1 ? "es" : ""} anterior${f.priorVersions.length > 1 ? "es" : ""}</span>`
+                  : ""
+              }</span>
               <span class="meta" style="flex:1 1 auto;display:flex;gap:8px;align-items:center">
                 🎯 <select data-memory-confidence="${escHtml(f.id)}" style="font-size:12px">
                   <option value="high" ${f.confidence === "high" ? "selected" : ""}>⭐ Alta</option>
@@ -10524,10 +12385,78 @@
       : hasQuery
         ? `<p class="tagline">Sin resultados para "${escHtml(aiMemoryQuery.trim())}".</p>`
         : `<p class="tagline">Todavía no hay nada guardado. Pídeselo a BMO por chat ("recuerda que...") o añádelo aquí.</p>`;
+    // 7.1.4 (KAN-140) - mismo mecanismo data-memory-delete que las filas
+    // normales (el listener generico de mas abajo ya las recoge a todas,
+    // no hace falta un handler aparte para el banner).
+    const conflictBanner = aiMemoryConflict
+      ? `<div class="sys-list-row" style="flex-wrap:wrap;border:1px solid #d9822b;background:rgba(217,130,43,0.12)">
+          ${
+            aiMemoryConflict.items && aiMemoryConflict.items.length
+              ? `<span style="flex:1 1 100%">⚠️ Lo que acabas de guardar ("${escHtml(aiMemoryConflict.newText)}") puede contradecir esto que ya tenías:</span>
+                ${aiMemoryConflict.items
+                  .map(
+                    (c) => `<span style="flex:1 1 100%;display:flex;justify-content:space-between;align-items:center;gap:8px">
+                      <span>${escHtml(c.text)}</span>
+                      <button type="button" class="activity-more" data-memory-delete="${escHtml(c.id)}">Borrar este</button>
+                    </span>`
+                  )
+                  .join("")}`
+              : ""
+          }
+          ${
+            // 7.1.3 (KAN-139) - mismo banner, misma mecanica data-memory-delete
+            // (reusa el listener generico de mas abajo) - distinto solo en el
+            // mensaje, para no duplicar el aviso de contradiccion (KAN-140)
+            // con el de redundancia genuina.
+            aiMemoryConflict.duplicateItems && aiMemoryConflict.duplicateItems.length
+              ? `<span style="flex:1 1 100%">🧹 Ya tenías guardado algo casi idéntico a esto:</span>
+                ${aiMemoryConflict.duplicateItems
+                  .map(
+                    (d) => `<span style="flex:1 1 100%;display:flex;justify-content:space-between;align-items:center;gap:8px">
+                      <span>${escHtml(d.text)}</span>
+                      <button type="button" class="activity-more" data-memory-delete="${escHtml(d.id)}">Borrar este</button>
+                    </span>`
+                  )
+                  .join("")}`
+              : ""
+          }
+          <button type="button" class="dk-btn ghost" id="ai-memory-conflict-dismiss" style="margin-top:6px">Descartar aviso</button>
+        </div>`
+      : "";
+    // 7.1.3 (KAN-139) - resultado del barrido bajo demanda: grupos de
+    // duplicados reales YA existentes en la memoria (no solo lo de este
+    // guardado). Cada grupo muestra todos los textos casi identicos y deja
+    // borrar cualquiera excepto uno (mismo mecanismo data-memory-delete).
+    const duplicateGroupsHtml =
+      aiMemoryDuplicateGroups && aiMemoryDuplicateGroups.length
+        ? `<div class="sys-list-row" style="flex-wrap:wrap;border:1px solid #d9822b;background:rgba(217,130,43,0.12);margin-top:10px">
+            <span style="flex:1 1 100%">🧹 ${aiMemoryDuplicateGroups.length} grupo${aiMemoryDuplicateGroups.length > 1 ? "s" : ""} de recuerdos casi idénticos:</span>
+            ${aiMemoryDuplicateGroups
+              .map(
+                (group) => `<div style="flex:1 1 100%;margin:4px 0;padding-left:8px;border-left:2px solid #d9822b">
+                  ${group
+                    .map(
+                      (f) => `<span style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+                        <span>${escHtml(MEMORY_CATEGORY_LABEL[f.category] || f.category)}: ${escHtml(f.text)}</span>
+                        <button type="button" class="activity-more" data-memory-delete="${escHtml(f.id)}">Borrar este</button>
+                      </span>`
+                    )
+                    .join("")}
+                </div>`
+              )
+              .join("")}
+            <button type="button" class="dk-btn ghost" id="ai-memory-duplicates-dismiss" style="margin-top:6px">Descartar</button>
+          </div>`
+        : aiMemoryDuplicateGroups
+          ? `<p class="tagline" style="margin-top:10px">Sin duplicados reales encontrados.</p>`
+          : "";
     els.aiBody.innerHTML = `
       <div class="docker-actions">
         <button type="button" class="dk-btn ghost" id="ai-memory-back">← Volver</button>
+        <button type="button" class="dk-btn ghost" id="ai-memory-find-duplicates">🧹 Buscar duplicados</button>
       </div>
+      ${conflictBanner}
+      ${duplicateGroupsHtml}
       <form id="ai-memory-form" class="ai-settings-form" style="margin-top:10px">
         <label>Categoría
           <select name="category">
@@ -10558,14 +12487,45 @@
       <div style="margin-top:10px">${rows}</div>`;
     document.getElementById("ai-memory-back")?.addEventListener("click", () => {
       aiMemoryQuery = "";
+      aiMemoryConflict = null;
+      aiMemoryDuplicateGroups = null;
       state.aiView = "settings";
       renderAiPanel();
+    });
+    document.getElementById("ai-memory-find-duplicates")?.addEventListener("click", async () => {
+      try {
+        const res = await api("/api/ai/memory/duplicates");
+        aiMemoryDuplicateGroups = res.groups || [];
+        renderAiMemoryView();
+      } catch (err) {
+        toast(err.message || "No se pudo buscar duplicados");
+      }
+    });
+    document.getElementById("ai-memory-duplicates-dismiss")?.addEventListener("click", () => {
+      aiMemoryDuplicateGroups = null;
+      renderAiMemoryView();
+    });
+    document.getElementById("ai-memory-conflict-dismiss")?.addEventListener("click", () => {
+      aiMemoryConflict = null;
+      renderAiMemoryView();
     });
     document.getElementById("ai-memory-form")?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
       try {
-        await api("/api/ai/memory", { method: "POST", body: JSON.stringify({ category: fd.get("category"), text: fd.get("text"), privacyLevel: fd.get("privacyLevel") }) });
+        const savedText = fd.get("text");
+        const result = await api("/api/ai/memory", { method: "POST", body: JSON.stringify({ category: fd.get("category"), text: savedText, privacyLevel: fd.get("privacyLevel") }) });
+        // 7.1.4 (KAN-140) - aiMemoryService.save() ya devuelve `conflicts`
+        // cuando el texto nuevo choca con algo existente de la misma
+        // categoria (6.7.13) - antes se ignoraba aqui por completo.
+        // 7.1.3 (KAN-139) - result.duplicates (aiMemoryService.save(), junto
+        // a conflicts ya existente) - mismo banner, aviso distinto.
+        const hasConflicts = result && result.conflicts && result.conflicts.length;
+        const hasDuplicates = result && result.duplicates && result.duplicates.length;
+        aiMemoryConflict =
+          hasConflicts || hasDuplicates
+            ? { newText: savedText, items: result.conflicts || [], duplicateItems: result.duplicates || [] }
+            : null;
         renderAiMemoryView();
       } catch (err) {
         toast(err.message || "No se pudo guardar");
@@ -10592,6 +12552,13 @@
       btn.addEventListener("click", async () => {
         try {
           await api(`/api/ai/memory/${encodeURIComponent(btn.getAttribute("data-memory-delete"))}`, { method: "DELETE" });
+          // 7.1.4 (KAN-140) - borrar (desde el banner o desde una fila
+          // normal) da por resuelto cualquier aviso de conflicto pendiente.
+          aiMemoryConflict = null;
+          // 7.1.3 (KAN-139) - un grupo de duplicados listado puede haber
+          // quedado obsoleto tras este borrado (ids que ya no existen) -
+          // se descarta en vez de arriesgarse a mostrar un id borrado.
+          aiMemoryDuplicateGroups = null;
           renderAiMemoryView();
         } catch (err) {
           toast(err.message || "No se pudo borrar");
@@ -10747,7 +12714,7 @@
       if (outcome.type === "confirmation_required") {
         state.aiLog.push({ pending: true, pendingId: outcome.pendingId, steps: outcome.steps, riskTier: outcome.highestRiskTier });
       } else {
-        state.aiLog.push({ role: "assistant", text: outcome.text || "(sin respuesta)" });
+        state.aiLog.push({ role: "assistant", text: outcome.text || "(sin respuesta)", confidence: outcome.confidence, sources: outcome.sources, qualityFlags: outcome.qualityFlags });
       }
     } catch (err) {
       state.aiLog.push({ role: "assistant", text: `⚠️ ${err.message || "Error hablando con la IA"}` });
@@ -10794,9 +12761,12 @@
       const prefs = await api("/api/ai/preferences");
       state.aiPreferences = prefs.preferences;
       state.aiPreferencesKnown = prefs.known;
+      // 7.1.10 (KAN-146) - sugerencias reales de uso, nunca aplicadas solas.
+      state.aiPreferenceSuggestions = prefs.suggestions || [];
     } catch {
       state.aiPreferences = null;
       state.aiPreferencesKnown = null;
+      state.aiPreferenceSuggestions = [];
     }
     renderAiPanel();
   }
@@ -11360,11 +13330,2626 @@
         </span>
       </div>`).join("") || `<p class="tagline">Sin datos todavía</p>`;
 
+    // 7.6.40 (KAN-322) - consolida en esta MISMA seccion las piezas reales
+    // que hasta ahora vivian repartidas en otros paneles del Sistema -
+    // agrega, no duplica (cada fila llama a datos ya reales via el
+    // endpoint agregador, sin inventar ningun dato nuevo).
+    const full = await api("/api/system/security-center-full").catch(() => null);
+    const summaryRow = (icon, name, detail) => `
+      <div class="integration-row integration-row--stub">
+        <span class="integration-ico">${icon}</span>
+        <span class="integration-info">
+          <span class="integration-name">${escHtml(name)}</span>
+          <span class="integration-detail">${escHtml(detail)}</span>
+        </span>
+      </div>`;
+    const summaryHtml = full ? [
+      summaryRow("🪪", "Identidades", `${(full.identities || []).length} identidad(es) real(es)`),
+      summaryRow("🔑", "Sesiones activas", `${(full.sessions || []).length} sesión(es)`),
+      summaryRow("🗝️", "Secretos", `${(full.secrets || []).filter((s) => s.configured).length}/${(full.secrets || []).length} configurados`),
+      summaryRow("🤖", "Agentes de IA", `${(full.agents || []).filter((a) => a.enabled).length}/${(full.agents || []).length} activos`),
+      summaryRow("🌐", "Red", full.network ? (full.network.online ? "con salida a Internet" : "sin salida a Internet") : "sin datos"),
+      summaryRow("🚨", "Amenazas/Avisos (24h)", full.threats ? `${full.threats.threats} amenaza(s) · ${full.threats.warnings} aviso(s) · ${full.threats.failedLogins} login(s) fallido(s)` : "sin datos"),
+      summaryRow("🔒", "Cuarentena activa", `${(full.quarantine || []).length} elemento(s)`),
+      summaryRow("💾", "Backups Docker", `${full.backups ? full.backups.count : 0} disponible(s)`),
+      summaryRow("♻️", "Recuperaciones recientes", `${(full.recovery || []).length} evento(s)`),
+    ].join("") : `<p class="tagline">Resumen consolidado no disponible</p>`;
+
     els.securityCenterBody.innerHTML = `
       <p class="tagline" style="margin:0 0 10px">Estado real por área — sin puntuación artificial.</p>
       <div class="integrations-list">${areasHtml}</div>
+      <p class="tagline" style="margin:16px 0 10px">Resumen consolidado — Identidades/Sesiones/Permisos/Secretos/Dispositivos/Red/Agentes/Auditoría/Amenazas/Cuarentena/Backups/Recuperación en un solo sitio.</p>
+      <div class="integrations-list">${summaryHtml}</div>
     `;
   }
+
+  // 7.8.2 (KAN-335) - Pokédex real: agrega GET /api/pokemon/dex (SEEN/CAUGHT
+  // por especie, "???" para lo no descubierto) + GET /api/pokemon/trainer
+  // (resumen real) - mismo patron perf-sheet/perf-body que el resto de
+  // sub-paneles de Sistema, sin CSS nuevo (reusa integration-row).
+  els.pokedexPanel = document.getElementById("pokedex-panel");
+  els.pokedexBody = document.getElementById("pokedex-body");
+  els.pokedexBack = document.getElementById("pokedex-back");
+
+  function closePokedexPanel() {
+    if (els.pokedexPanel) els.pokedexPanel.hidden = true;
+  }
+
+  // 2026-08-31 - especie != individuo (propuesta del usuario): un Pokémon
+  // capturado (dex.caught) es clicable y lleva a su COLECCIÓN real
+  // (todos los ejemplares distintos que tienes de esa especie, cada uno
+  // con su propia naturaleza/IVs/nivel/shiny/zona), no solo un check.
+  async function renderPokedexList() {
+    els.pokedexBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const [dexData, overview, ballsData, goal] = await Promise.all([
+      api("/api/pokemon/dex").catch(() => ({ entries: [] })),
+      api("/api/pokemon/trainer").catch(() => null),
+      api("/api/pokemon/balls").catch(() => ({ balls: [] })),
+      api("/api/pokemon/dex/goal").catch(() => null),
+    ]);
+    const entries = dexData.entries || [];
+    const seenCount = entries.filter((e) => e.seen).length;
+    const caughtCount = entries.filter((e) => e.caught).length;
+
+    // 7.8.11 (KAN-344) - inventario real de bolas, visible también fuera
+    // de un encuentro (no solo en el momento de lanzarlas).
+    const ballsRow = (ballsData.balls || [])
+      .map((b) => `${b.emoji} ${b.unlimited ? "∞" : b.owned}`)
+      .join("  ·  ");
+
+    const summaryHtml = overview
+      ? `<div class="perf-grid" style="margin-bottom:14px">
+          <div class="perf-metric"><div class="label">🎒 Pokémon</div><div style="font-weight:700">${overview.pokemonOwned}</div></div>
+          <div class="perf-metric"><div class="label">🐾 Equipo</div><div style="font-weight:700">${overview.teamSize}/${overview.teamMax}</div></div>
+          <div class="perf-metric"><div class="label">📦 Cajas</div><div style="font-weight:700">${overview.boxCount}</div></div>
+          <div class="perf-metric"><div class="label">🎾 Bolas</div><div style="font-weight:700;font-size:12px">${ballsRow || "—"}</div></div>
+        </div>`
+      : "";
+
+    // 7.8.37 (KAN-370) - Objetivo real de Pokédex: implementado real
+    // (`dexTotal()`) frente al total REAL de las 9 generaciones
+    // oficiales (1025 especies) - crece de verdad solo cuando se
+    // importa contenido real de una generación nueva (7.8.35/7.8.36).
+    const goalHtml = goal
+      ? `<div class="poke-hero" style="padding:12px 16px;margin-bottom:14px">
+          <div class="poke-hero-avatar" style="font-size:22px">🎯</div>
+          <div class="poke-hero-info">
+            <div class="poke-hero-name poke-title" style="font-size:0.95rem">Objetivo de Pokédex</div>
+            <div class="poke-hero-rank poke-num">${goal.implemented}/${goal.totalReal} implementados (${goal.percent}%)</div>
+            <div class="poke-bar-track"><div class="poke-bar-fill xp" style="width:${goal.percent}%"></div></div>
+            <div style="display:flex;gap:6px;overflow-x:auto;margin-top:8px;padding-bottom:2px">
+              ${goal.byGeneration
+                .map(
+                  (g) =>
+                    `<span class="poke-num" style="flex-shrink:0;font-size:11px;padding:3px 8px;border-radius:999px;background:rgba(255,255,255,0.06)">${g.complete ? "✅" : "⬜"} Gen ${g.generation} ${escHtml(g.name)} ${g.implemented}/${g.totalReal}</span>`
+                )
+                .join("")}
+            </div>
+          </div>
+        </div>`
+      : "";
+
+    // 7.8.30 (KAN-363) - rareza real visible en la lista, mismo patrón
+    // que tipos: solo se muestra si ya conoces la especie.
+    const RARITY_LABELS = {
+      common: "⚪ Común", uncommon: "🟢 Poco común", rare: "🔵 Raro",
+      "very-rare": "🟣 Muy raro", legendary: "🟡 Legendario", mythical: "🌟 Mítico",
+    };
+    const rowsHtml = entries
+      .map((e) => {
+        const dexNum = String(e.dexNumber).padStart(3, "0");
+        const status = e.caught ? `CAUGHT ✅${e.owned > 1 ? ` ×${e.owned}` : ""}` : e.seen ? "SEEN ✅" : "Sin descubrir";
+        const rarityLabel = e.rarity && RARITY_LABELS[e.rarity] ? " · " + RARITY_LABELS[e.rarity] : "";
+        const detail = `${status}${e.types && e.types.length ? " · " + e.types.map(escHtml).join("/") : ""}${rarityLabel}`;
+        if (!e.caught) {
+          return `<div class="poke-list-card${e.seen ? "" : " locked"}">
+            <div class="poke-list-card-avatar">${spriteImg(e.sprites, "front", e.emoji, 48)}</div>
+            <div class="poke-list-card-body">
+              <div class="poke-list-card-title">#${dexNum} ${escHtml(e.name)}</div>
+              <div class="poke-list-card-sub">${detail}</div>
+            </div>
+          </div>`;
+        }
+        return `<button type="button" class="poke-list-card" data-dex-species="${e.dexNumber}">
+          <div class="poke-list-card-avatar">${spriteImg(e.sprites, "front", e.emoji, 48)}</div>
+          <div class="poke-list-card-body">
+            <div class="poke-list-card-title">#${dexNum} ${escHtml(e.name)}</div>
+            <div class="poke-list-card-sub">${detail} · ver colección ›</div>
+          </div>
+        </button>`;
+      })
+      .join("");
+
+    els.pokedexBody.innerHTML = `
+      ${goalHtml}
+      ${summaryHtml}
+      <p class="tagline" style="margin:0 0 10px">${caughtCount}/${entries.length} capturados · ${seenCount}/${entries.length} vistos</p>
+      <div>${rowsHtml || `<p class="tagline">Todavía no has visto ningún Pokémon.</p>`}</div>
+    `;
+    els.pokedexBody.querySelectorAll("[data-dex-species]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        renderSpeciesCollection(btn.getAttribute("data-dex-species")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+  }
+
+  async function renderSpeciesCollection(dexNumber) {
+    els.pokedexBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const data = await api(`/api/pokemon/collection/${dexNumber}`);
+    const rowsHtml = data.individuals
+      .map((ind, i) => {
+        const ivs = ind.ivs || {};
+        const ivSum = (ivs.hp || 0) + (ivs.attack || 0) + (ivs.defense || 0) + (ivs.spAttack || 0) + (ivs.spDefense || 0) + (ivs.speed || 0);
+        const ivPct = Math.round((ivSum / (31 * 6)) * 100);
+        const label = `${escHtml(data.species.name)} #${String(i + 1).padStart(3, "0")}`;
+        const spriteVariant = ind.shiny ? "frontShiny" : "front";
+        return `<div class="poke-list-card">
+          <div class="poke-list-card-avatar">${spriteImg(data.species.sprites, spriteVariant, ind.shiny ? "✨" : data.species.emoji, 48)}</div>
+          <div class="poke-list-card-body">
+            <div class="poke-list-card-title">${label}${ind.shiny ? " · SHINY" : ""}</div>
+            <div class="poke-list-card-sub">Nv.${ind.level} · ${escHtml(ind.nature)} · IV ${ivPct}%${ind.caughtZone ? " · " + escHtml(ind.caughtZone) : ""}</div>
+          </div>
+        </div>`;
+      })
+      .join("");
+    els.pokedexBody.innerHTML = `
+      <button type="button" class="dk-btn ghost" data-collection-back style="margin-bottom:12px">← Volver a la Pokédex</button>
+      <div class="poke-result-card" style="padding:16px">
+        ${spriteImg(data.species.sprites, "artwork", data.species.emoji, 140)}
+        <p class="tagline" style="margin:8px 0 0;font-size:16px;color:#e8f4ff">${escHtml(data.species.name)} ${cryButton(data.species.cries)}</p>
+        <p class="tagline" style="margin:2px 0 0">${data.count} ejemplar(es) en tu colección</p>
+      </div>
+      <div>${rowsHtml || `<p class="tagline">Sin ejemplares.</p>`}</div>
+    `;
+    // 7.8.33 (KAN-366) - grito real automático al abrir la ficha, igual
+    // que la Pokédex real.
+    playCry(data.species.cries);
+    els.pokedexBody.querySelector("[data-collection-back]")?.addEventListener("click", () => {
+      renderPokedexList().catch((err) => toast(err.message || "Error"));
+    });
+  }
+
+  async function openPokedexPanel() {
+    if (!els.pokedexPanel || !els.pokedexBody) {
+      toast("Pokédex no disponible");
+      return;
+    }
+    closeSysHub();
+    hideAllPokeScreens();
+    els.pokedexPanel.hidden = false;
+    await renderPokedexList();
+  }
+
+  els.pokedexBack?.addEventListener("click", () => {
+    closePokedexPanel();
+    setAppNav("servicios");
+  });
+  els.pokedexPanel?.addEventListener("click", (e) => {
+    if (e.target === els.pokedexPanel) {
+      closePokedexPanel();
+      setAppNav("servicios");
+    }
+  });
+
+  // 7.8.3 (KAN-336) - Explorar: zona real -> encuentro real -> captura
+  // real, reusando /api/pokemon/zones + encounter + capture ya construidos
+  // (KAN-333). Re-renderiza el mismo perf-body en 3 pasos (lista de
+  // zonas -> resultado del encuentro -> resultado de la captura), mismo
+  // patron de re-render+re-bind que el resto del panel de Dispositivos.
+  els.pokemonExplorePanel = document.getElementById("pokemon-explore-panel");
+  els.pokemonExploreBody = document.getElementById("pokemon-explore-body");
+  els.pokemonExploreBack = document.getElementById("pokemon-explore-back");
+
+  function closePokemonExplorePanel() {
+    if (els.pokemonExplorePanel) els.pokemonExplorePanel.hidden = true;
+  }
+
+  // 7.8.27 (KAN-360) - mapa real de zonas conectadas: posiciones fijas
+  // en octágono (mismo orden real que el anillo de progreso real -
+  // forest→meadow→cave→beach→lake→mountain→city→volcano→forest) sobre
+  // un SVG, con líneas reales entre zonas conectadas (`connectsTo`,
+  // dato real del contenido) y color real según si está desbloqueada.
+  const WORLD_MAP_POS = {
+    forest: [150, 40], meadow: [228, 72], cave: [260, 150], beach: [228, 228],
+    lake: [150, 260], mountain: [72, 228], city: [40, 150], volcano: [72, 72],
+  };
+  let exploreView = "map";
+
+  // 7.8.40 (KAN-373) - a qué panel real volver al terminar un combate
+  // (Continuar/Huir) - Explorar si el combate salió de ahí (salvaje o
+  // entrenador itinerante), Medallero si salió de un reto de gimnasio -
+  // se fija justo antes de entrar en cada tipo real de combate.
+  let battleReturnTarget = null;
+
+  // 7.8.42 (KAN-375) - a qué pantalla real volver tras un encuentro
+  // (huir/tras capturar/tras luchar): la lista de zonas de siempre, o
+  // el mapa 2D real en el punto donde saltó el encuentro si viniste
+  // andando por él. Se fija justo antes de abrir cada encuentro real.
+  let encounterReturnTarget = null;
+
+  // 7.8.27 REVISIÓN - cuánto falta de verdad para desbloquear una zona
+  // (no el umbral total, que confundía "12" con "te faltan 12").
+  function zoneRemaining(z) {
+    return Math.max(0, (z.unlockDexCaught || 0) - (z.dexCaught || 0));
+  }
+
+  function renderWorldMapSvg(zones) {
+    const byId = {};
+    for (const z of zones) byId[z.id] = z;
+    const edges = new Set();
+    for (const z of zones) {
+      for (const other of z.connectsTo || []) {
+        const key = [z.id, other].sort().join("|");
+        edges.add(key);
+      }
+    }
+    const lines = Array.from(edges)
+      .map((key) => {
+        const [a, b] = key.split("|");
+        const [x1, y1] = WORLD_MAP_POS[a] || [150, 150];
+        const [x2, y2] = WORLD_MAP_POS[b] || [150, 150];
+        const bothUnlocked = byId[a] && byId[b] && byId[a].unlocked && byId[b].unlocked;
+        return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${bothUnlocked ? "#51cf66" : "#3a3a3a"}" stroke-width="2" />`;
+      })
+      .join("");
+    const nodes = zones
+      .map((z) => {
+        const pos = WORLD_MAP_POS[z.id] || [150, 150];
+        const fill = z.unlocked ? "#1f3d2b" : "#2a2a2a";
+        const stroke = z.unlocked ? "#51cf66" : "#555";
+        return `<g data-map-zone="${escHtml(z.id)}" style="cursor:pointer">
+          <circle cx="${pos[0]}" cy="${pos[1]}" r="26" fill="${fill}" stroke="${stroke}" stroke-width="2" />
+          <text x="${pos[0]}" y="${pos[1] + 6}" text-anchor="middle" font-size="22">${z.unlocked ? z.emoji : "🔒"}</text>
+        </g>`;
+      })
+      .join("");
+    return `<svg viewBox="0 0 300 300" style="width:100%;max-width:320px;display:block;margin:0 auto">${lines}${nodes}</svg>`;
+  }
+
+  async function renderExploreWorldMap() {
+    const data = await api("/api/pokemon/zones").catch(() => ({ zones: [] }));
+    const zones = data.zones || [];
+    const svg = renderWorldMapSvg(zones);
+    const legend = zones
+      .map((z) => `<span class="integration-detail" style="margin-right:10px">${z.unlocked ? z.emoji : "🔒"} ${escHtml(z.name)}${!z.unlocked ? ` (${zoneRemaining(z)} más)` : ""}</span>`)
+      .join("");
+    els.pokemonExploreBody.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button type="button" class="dk-btn" data-explore-view="map">🗺️ Mapa</button>
+        <button type="button" class="dk-btn ghost" data-explore-view="list">📋 Lista</button>
+      </div>
+      ${svg}
+      <p class="tagline" style="margin:10px 0 0;line-height:1.8">${legend}</p>
+    `;
+    els.pokemonExploreBody.querySelectorAll("[data-explore-view]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        exploreView = btn.getAttribute("data-explore-view");
+        renderExploreZoneList().catch((err) => toast(err.message || "Error"));
+      });
+    });
+    els.pokemonExploreBody.querySelectorAll("[data-map-zone]").forEach((el) => {
+      el.addEventListener("click", () => {
+        const zoneId = el.getAttribute("data-map-zone");
+        const zone = zones.find((z) => z.id === zoneId);
+        if (!zone) return;
+        if (!zone.unlocked) {
+          toast(`${zone.name} está bloqueada - captura ${zoneRemaining(zone)} especie(s) más en la Pokédex para desbloquearla (${zone.dexCaught}/${zone.unlockDexCaught}).`);
+          return;
+        }
+        // 7.8.42 (KAN-375) - mismo cambio que en la vista Lista: entrar
+        // "a pie" desde el mapa del mundo abre ahora el mapa 2D real.
+        renderZoneMap(zoneId).catch((err) => toast(err.message || "Error"));
+      });
+    });
+  }
+
+  async function renderExploreZoneList() {
+    if (exploreView === "map") {
+      await renderExploreWorldMap();
+      return;
+    }
+    const [data, clock, weather] = await Promise.all([
+      api("/api/pokemon/zones").catch(() => ({ zones: [] })),
+      api("/api/pokemon/clock").catch(() => null),
+      api("/api/pokemon/weather").catch(() => null),
+    ]);
+    const zones = data.zones || [];
+    // 7.8.6 - reloj real de BMO visible: así se ve de verdad por qué
+    // ciertos Pokémon (Zubat/Gastly de noche, Clefairy de día) aparecen
+    // o no ahora mismo, no es un filtro silencioso.
+    const clockHtml = clock
+      ? `<p class="tagline" style="margin:0 0 10px">${clock.emoji} ${escHtml(clock.label)} · ${String(clock.hour).padStart(2, "0")}:${String(clock.minute).padStart(2, "0")} — algunos Pokémon solo aparecen de día o de noche.</p>`
+      : "";
+    // 7.8.7 - Clima real de BMO (mismo dato que el widget del dashboard,
+    // Open-Meteo/Valladolid): visible igual que el reloj, no un filtro
+    // escondido - explica por qué ciertos Pokémon (Dratini con tormenta,
+    // Jynx con nieve, Magnemite con tormenta) aparecen ahora o no.
+    const weatherHtml = weather
+      ? `<p class="tagline" style="margin:0 0 10px">${weather.emoji} ${escHtml(weather.label)}${weather.temp != null ? ` · ${weather.temp}°` : ""} en ${escHtml(weather.city || "tu zona")} — favorece a ciertos tipos y desbloquea encuentros exclusivos.</p>`
+      : "";
+    // 7.8.8 - Métodos de encuentro: zonas de agua (Lake/Beach) tienen
+    // tablas alternativas reales (surf/fish) además de caminar - se
+    // muestran como botones extra solo si la zona los define de verdad.
+    const METHOD_LABELS = { surf: "🏄 Surfear", fish: "🎣 Pescar" };
+    els.pokemonExploreBody.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button type="button" class="dk-btn ghost" data-explore-view="map">🗺️ Mapa</button>
+        <button type="button" class="dk-btn" data-explore-view="list">📋 Lista</button>
+      </div>
+      ${clockHtml}
+      ${weatherHtml}
+      <p class="tagline" style="margin:0 0 10px">Elige una zona para explorar.</p>
+      <div class="integrations-list">
+        ${zones.map((z) => {
+          // 7.8.27 (KAN-360) - zona bloqueada real: no se puede tocar
+          // (mismo bloqueo que aplica el servidor en /encounter, aquí
+          // solo se refleja para no dejar tocar algo que va a fallar).
+          if (!z.unlocked) {
+            return `<div class="integration-row integration-row--stub" style="opacity:0.5">
+              <span class="integration-ico">🔒</span>
+              <span class="integration-info">
+                <span class="integration-name">${escHtml(z.name)}</span>
+                <span class="integration-detail">Bloqueada · captura ${zoneRemaining(z)} especie(s) más en la Pokédex (${z.dexCaught}/${z.unlockDexCaught})</span>
+              </span>
+            </div>`;
+          }
+          const methodButtons = z.methods
+            ? Object.keys(z.methods)
+                .map((m) => `<button type="button" class="dk-btn ghost" data-explore-zone="${escHtml(z.id)}" data-explore-method="${escHtml(m)}" style="margin-right:6px">${METHOD_LABELS[m] || m}</button>`)
+                .join("")
+            : "";
+          // 7.8.40 (KAN-373) - entrenador itinerante real disponible
+          // ahora mismo en esta zona (sin cooldown) - reto real, aparte
+          // del encuentro Pokémon normal.
+          const trainerButton = z.trainerAvailable
+            ? `<button type="button" class="dk-btn ghost" data-explore-trainer="${escHtml(z.id)}" style="margin-right:6px">🥊 Entrenador</button>`
+            : "";
+          return `<div class="integration-row integration-row--stub" style="flex-wrap:wrap;gap:8px">
+            <button type="button" data-explore-zone="${escHtml(z.id)}" data-explore-method="walk" style="display:flex;align-items:center;gap:10px;flex:1;min-width:180px;text-align:left;cursor:pointer;border:none;background:none;padding:0">
+              <span class="integration-ico">${z.emoji}</span>
+              <span class="integration-info">
+                <span class="integration-name">${escHtml(z.name)}</span>
+                <span class="integration-detail">Nivel ${z.levelRange[0]}-${z.levelRange[1]} · ${z.encounters.length} especie(s) a pie</span>
+              </span>
+            </button>
+            ${methodButtons || trainerButton ? `<div style="width:100%;padding-left:38px">${methodButtons}${trainerButton}</div>` : ""}
+          </div>`;
+        }).join("") || `<p class="tagline">Sin zonas configuradas.</p>`}
+      </div>
+    `;
+    els.pokemonExploreBody.querySelectorAll("[data-explore-view]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        exploreView = btn.getAttribute("data-explore-view");
+        renderExploreZoneList().catch((err) => toast(err.message || "Error"));
+      });
+    });
+    els.pokemonExploreBody.querySelectorAll("[data-explore-zone]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const zoneId = btn.getAttribute("data-explore-zone");
+        const method = btn.getAttribute("data-explore-method");
+        // 7.8.42 (KAN-375) - "a pie" ahora abre el mapa 2D real (te
+        // mueves de verdad, el encuentro salta al pisar hierba/agua) en
+        // vez de un encuentro instantáneo. Surfear/Pescar (botones
+        // aparte) siguen siendo instantáneos, sin tocar - se puede
+        // llegar al agua real también caminando dentro del mapa.
+        if (method === "walk") {
+          renderZoneEntry(zoneId).catch((err) => toast(err.message || "Error"));
+        } else {
+          startPokemonEncounter(zoneId, method).catch((err) => toast(err.message || "Error"));
+        }
+      });
+    });
+    els.pokemonExploreBody.querySelectorAll("[data-explore-trainer]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const zoneId = btn.getAttribute("data-explore-trainer");
+        battleReturnTarget = renderExploreZoneList;
+        renderBattleTeamPicker({ kind: "trainer", opponentId: zoneId }).catch((err) => toast(err.message || "Error"));
+      });
+    });
+  }
+
+  // 7.8.42 (KAN-375) - mapa 2D real: te mueves de verdad por una
+  // cuadrícula real de la zona (pokemonMapService, misma cada vez que
+  // vuelves), el encuentro real salta al pisar terreno salvaje/agua -
+  // reutiliza el mismo /api/pokemon/encounter de siempre por debajo,
+  // solo cambia CÓMO se dispara.
+  const TILE_EMOJI = { obstacle: "🌲", path: "⬜", wild: "🌿", water: "🌊" };
+  let mapRunning = false;
+
+  // 7.8.59 (KAN-392) - punto de entrada real de una zona: lidera con
+  // exploración automática (motor real del 7.8.48) en vez de abrir
+  // directamente el D-pad manual. El D-pad (renderZoneMap, sin tocar)
+  // sigue existiendo como opción secundaria explícita, no como pantalla
+  // por defecto.
+  async function renderZoneEntry(zoneId) {
+    els.pokemonExploreBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const map = await api(`/api/pokemon/explore/map/${encodeURIComponent(zoneId)}`).catch((err) => {
+      toast(err.message || "Error");
+      return null;
+    });
+    if (!map) {
+      renderExploreZoneList().catch((err) => toast(err.message || "Error"));
+      return;
+    }
+    els.pokemonExploreBody.innerHTML = `
+      <div class="poke-result-card">
+        <div class="poke-result-ico">${escHtml(map.zone.emoji || "🌍")}</div>
+        <p class="tagline poke-title">${escHtml(map.zone.name)}</p>
+        <p class="poke-num">Explora sola/o o toma tú el control</p>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:14px">
+        <button type="button" class="dk-btn" data-zone-entry="quick">🟢 Exploración automática</button>
+        <button type="button" class="dk-btn ghost" data-zone-entry="auto">🟡 Auto hasta encuentro</button>
+        <button type="button" class="dk-btn ghost" data-zone-entry="manual">🔴 Caminar manualmente</button>
+      </div>
+      <div style="display:flex;justify-content:center;margin-top:14px">
+        <button type="button" class="dk-btn ghost" data-zone-entry="back">◀ Elegir otra zona</button>
+      </div>
+    `;
+    els.pokemonExploreBody.querySelector('[data-zone-entry="quick"]')?.addEventListener("click", () => {
+      renderQuickExploreView(zoneId).catch((err) => toast(err.message || "Error"));
+    });
+    els.pokemonExploreBody.querySelector('[data-zone-entry="auto"]')?.addEventListener("click", () => {
+      moveOnZoneMapAuto(zoneId).catch((err) => toast(err.message || "Error"));
+    });
+    els.pokemonExploreBody.querySelector('[data-zone-entry="manual"]')?.addEventListener("click", () => {
+      renderZoneMap(zoneId).catch((err) => toast(err.message || "Error"));
+    });
+    els.pokemonExploreBody.querySelector('[data-zone-entry="back"]')?.addEventListener("click", () => {
+      renderExploreZoneList().catch((err) => toast(err.message || "Error"));
+    });
+  }
+
+  async function renderZoneMap(zoneId) {
+    els.pokemonExploreBody.innerHTML = `<p class="tagline">Cargando el mapa…</p>`;
+    const map = await api(`/api/pokemon/explore/map/${encodeURIComponent(zoneId)}`).catch((err) => {
+      toast(err.message || "Error");
+      return null;
+    });
+    if (!map) {
+      renderExploreZoneList().catch((err) => toast(err.message || "Error"));
+      return;
+    }
+    const palette = map.palette || {};
+    const tileHtml = (type, x, y) => {
+      const emoji = type === "obstacle" ? palette.obstacleEmoji || TILE_EMOJI.obstacle
+        : type === "water" ? palette.waterEmoji || TILE_EMOJI.water
+        : type === "wild" ? palette.wildEmoji || TILE_EMOJI.wild
+        : palette.pathEmoji || TILE_EMOJI.path;
+      const isPlayer = map.position.x === x && map.position.y === y;
+      return `<div class="poke-map-tile ${type}">${escHtml(emoji)}${isPlayer ? `<span class="poke-map-player">🧑</span>` : ""}</div>`;
+    };
+    const gridHtml = map.tiles.map((row, y) => row.map((type, x) => tileHtml(type, x, y)).join("")).join("");
+    els.pokemonExploreBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">${map.zone.emoji} ${escHtml(map.zone.name)} — muévete y pisa hierba/agua para buscar Pokémon.</p>
+      <div style="display:flex;gap:8px;justify-content:center;margin-bottom:10px;flex-wrap:wrap">
+        <button type="button" class="dk-btn" disabled title="Tú controlas cada paso con el D-pad de abajo">🔴 Manual</button>
+        <button type="button" class="dk-btn ghost" data-map-auto>🟡 Auto (hasta encuentro)</button>
+        <button type="button" class="dk-btn ghost" data-map-quick>🟢 Rápido (por minutos)</button>
+      </div>
+      <div class="poke-map-wrap">
+        <div class="poke-map-grid" style="grid-template-columns:repeat(${map.width}, 38px)">${gridHtml}</div>
+      </div>
+      <div class="poke-dpad">
+        <button type="button" class="poke-dpad-up" data-map-move="up">⬆️</button>
+        <button type="button" class="poke-dpad-left" data-map-move="left">⬅️</button>
+        <span class="poke-dpad-center">🚶</span>
+        <button type="button" class="poke-dpad-right" data-map-move="right">➡️</button>
+        <button type="button" class="poke-dpad-down" data-map-move="down">⬇️</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center">
+        <button type="button" class="dk-btn${mapRunning ? "" : " ghost"}" data-map-run>🏃 Correr ${mapRunning ? "(activo)" : ""}</button>
+        <button type="button" class="dk-btn ghost" data-map-rest>💤 Descansar</button>
+        <button type="button" class="dk-btn ghost" data-map-exit>🚪 Salir</button>
+      </div>
+    `;
+    els.pokemonExploreBody.querySelectorAll("[data-map-move]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        moveOnZoneMap(zoneId, btn.getAttribute("data-map-move")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+    els.pokemonExploreBody.querySelector("[data-map-run]")?.addEventListener("click", () => {
+      mapRunning = !mapRunning;
+      renderZoneMap(zoneId).catch((err) => toast(err.message || "Error"));
+    });
+    els.pokemonExploreBody.querySelector("[data-map-rest]")?.addEventListener("click", async () => {
+      const rest = await api("/api/pokemon/explore/rest", { method: "POST", body: JSON.stringify({ zoneId }) }).catch((err) => {
+        toast(err.message || "Error");
+        return null;
+      });
+      if (rest) toast(rest.message);
+    });
+    els.pokemonExploreBody.querySelector("[data-map-exit]")?.addEventListener("click", () => {
+      renderZoneEntry(zoneId).catch((err) => toast(err.message || "Error"));
+    });
+    // 7.8.48 (KAN-381) - niveles 🟡 Supervisado / 🟢 Rápido del motor de
+    // exploración automática, el D-pad de arriba (🔴 Manual) no cambia.
+    els.pokemonExploreBody.querySelector("[data-map-auto]")?.addEventListener("click", () => {
+      moveOnZoneMapAuto(zoneId).catch((err) => toast(err.message || "Error"));
+    });
+    els.pokemonExploreBody.querySelector("[data-map-quick]")?.addEventListener("click", () => {
+      renderQuickExploreView(zoneId).catch((err) => toast(err.message || "Error"));
+    });
+  }
+
+  // 7.8.48 (KAN-381) - 🟡 Supervisado: autopiloto real (mismo motor de
+  // movimiento/encuentro que el D-pad, solo que camina sola en el
+  // servidor) que se detiene en cuanto pasa algo real y te devuelve el
+  // control con la MISMA pantalla de resultado de encuentro de siempre.
+  async function moveOnZoneMapAuto(zoneId) {
+    toast("Caminando sola/o hasta que pase algo…");
+    const result = await api(`/api/pokemon/explore/auto-walk/${encodeURIComponent(zoneId)}`, { method: "POST" }).catch((err) => {
+      toast(err.message || "Error");
+      return null;
+    });
+    if (!result) {
+      await renderZoneEntry(zoneId);
+      return;
+    }
+    if (result.encounter) {
+      const ballsData = await api("/api/pokemon/balls").catch(() => ({ balls: [] }));
+      encounterReturnTarget = () => renderZoneEntry(zoneId);
+      renderPokemonEncounterResult(result.encounter, ballsData.balls || []);
+      return;
+    }
+    const reasonMsg = result.stoppedReason === "stuck" ? "te has quedado atascado" : "sin encontrar nada";
+    toast(`Caminaste ${result.stepsWalked} pasos (${reasonMsg}).`);
+    await renderZoneEntry(zoneId);
+  }
+
+  // 7.8.48 (KAN-381) - 🟢 Rápido: sesión real de minutos de reloj,
+  // calculada de forma retroactiva en el backend (nunca un timer aquí
+  // en el cliente) - esta vista solo consulta/inicia/detiene la sesión
+  // real y muestra su resumen/registro real cuando termina.
+  async function renderQuickExploreView(zoneId) {
+    els.pokemonExploreBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const status = await api("/api/pokemon/explore/quick/status").catch(() => ({ status: "none" }));
+    let bodyHtml = "";
+    if (status.status === "running") {
+      bodyHtml = `
+        <div class="poke-result-card">
+          <div class="poke-result-ico">🟢</div>
+          <p class="tagline poke-title">Explorando ${escHtml(status.zoneId)}…</p>
+          <p class="poke-num">${status.remainingMinutes} min restantes de ${status.durationMinutes}</p>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+          <button type="button" class="dk-btn" data-quick-refresh>🔄 Actualizar</button>
+          <button type="button" class="dk-btn ghost" data-quick-stop>⏹️ Detener ahora</button>
+        </div>`;
+    } else if (status.status === "completed") {
+      const s = status.summary || {};
+      const logHtml = (s.log || []).map((l) => `<p>${escHtml(l)}</p>`).join("") || `<p>Nada digno de mención.</p>`;
+      bodyHtml = `
+        <div class="poke-result-card">
+          <div class="poke-result-ico">✅</div>
+          <p class="tagline poke-title">Sesión terminada en ${escHtml(s.zoneName || status.zoneId)}</p>
+          <p class="poke-num">${s.stepsWalked ?? 0} pasos · ${s.sightings ?? 0} avistamientos · ${(s.trainerBattles && s.trainerBattles.won) || 0} combates ganados / ${(s.trainerBattles && s.trainerBattles.lost) || 0} perdidos</p>
+        </div>
+        <div class="poke-log">${logHtml}</div>
+        <div style="display:flex;gap:8px;justify-content:center">
+          <button type="button" class="dk-btn" data-quick-close>Cerrar</button>
+        </div>`;
+    } else {
+      bodyHtml = `
+        <p class="tagline">🟢 Rápido explora sola/o durante los minutos que elijas. Nunca captura Pokémon (solo los avista) y solo combate contra entrenadores itinerantes si tu equipo está sano.</p>
+        <div style="display:flex;gap:8px;align-items:center;justify-content:center;margin:10px 0">
+          <label class="tagline" for="quick-minutes">Minutos:</label>
+          <input id="quick-minutes" type="number" min="1" max="180" value="30" style="width:70px" />
+        </div>
+        <div style="display:flex;justify-content:center">
+          <button type="button" class="dk-btn" data-quick-start>▶️ Empezar</button>
+        </div>`;
+    }
+    els.pokemonExploreBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">🟢 Exploración Rápida</p>
+      ${bodyHtml}
+      <div style="display:flex;justify-content:center;margin-top:12px">
+        <button type="button" class="dk-btn ghost" data-quick-back>◀ Volver</button>
+      </div>
+    `;
+    els.pokemonExploreBody.querySelector("[data-quick-back]")?.addEventListener("click", () => {
+      renderZoneEntry(zoneId).catch((err) => toast(err.message || "Error"));
+    });
+    els.pokemonExploreBody.querySelector("[data-quick-refresh]")?.addEventListener("click", () => {
+      renderQuickExploreView(zoneId).catch((err) => toast(err.message || "Error"));
+    });
+    els.pokemonExploreBody.querySelector("[data-quick-close]")?.addEventListener("click", async () => {
+      await api("/api/pokemon/explore/quick/clear", { method: "POST" }).catch(() => null);
+      renderQuickExploreView(zoneId).catch((err) => toast(err.message || "Error"));
+    });
+    els.pokemonExploreBody.querySelector("[data-quick-stop]")?.addEventListener("click", async () => {
+      await api("/api/pokemon/explore/quick/stop", { method: "POST" }).catch((err) => toast(err.message || "Error"));
+      renderQuickExploreView(zoneId).catch((err) => toast(err.message || "Error"));
+    });
+    els.pokemonExploreBody.querySelector("[data-quick-start]")?.addEventListener("click", async () => {
+      const minutesInput = els.pokemonExploreBody.querySelector("#quick-minutes");
+      const minutes = Number(minutesInput && minutesInput.value) || 30;
+      await api(`/api/pokemon/explore/quick/${encodeURIComponent(zoneId)}/start`, { method: "POST", body: JSON.stringify({ durationMinutes: minutes }) }).catch((err) => {
+        toast(err.message || "Error");
+      });
+      renderQuickExploreView(zoneId).catch((err) => toast(err.message || "Error"));
+    });
+  }
+
+  async function moveOnZoneMap(zoneId, direction) {
+    const result = await api("/api/pokemon/explore/move", {
+      method: "POST",
+      body: JSON.stringify({ zoneId, direction, running: mapRunning }),
+    });
+    if (result.encounter) {
+      const ballsData = await api("/api/pokemon/balls").catch(() => ({ balls: [] }));
+      encounterReturnTarget = () => renderZoneMap(zoneId);
+      renderPokemonEncounterResult(result.encounter, ballsData.balls || []);
+      return;
+    }
+    if (result.blocked) toast("No puedes pasar por ahí.");
+    await renderZoneMap(zoneId);
+  }
+
+  async function startPokemonEncounter(zoneId, method) {
+    // 7.8.42 (KAN-375) - este flujo instantáneo (Surfear/Pescar) sigue
+    // volviendo siempre a la lista de zonas, nunca al mapa 2D - se
+    // reinicia por si quedó fijado un mapa de un encuentro anterior.
+    encounterReturnTarget = renderExploreZoneList;
+    els.pokemonExploreBody.innerHTML = `<p class="tagline">Explorando…</p>`;
+    const [enc, ballsData] = await Promise.all([
+      api("/api/pokemon/encounter", { method: "POST", body: JSON.stringify({ zoneId, method }) }),
+      api("/api/pokemon/balls").catch(() => ({ balls: [] })),
+    ]);
+    renderPokemonEncounterResult(enc, ballsData.balls || []);
+  }
+
+  function renderPokemonEncounterResult(enc, balls) {
+    // 7.8.33 (KAN-366) - grito real automático al aparecer el salvaje,
+    // igual que en el juego real.
+    playCry(enc.wild && enc.wild.cries);
+    const wild = enc.wild;
+    const legendaryBanner = wild.legendary
+      ? `<p class="tagline" style="margin:0 0 10px;color:#f5c542;font-weight:600">🌟 ¡ENCUENTRO LEGENDARIO! 🌟</p>`
+      : "";
+    const methodLabels = { walk: "🚶 A pie", surf: "🏄 Surfeando", fish: "🎣 Pescando" };
+    const methodBanner = enc.method && enc.method !== "walk"
+      ? `<p class="tagline" style="margin:0 0 10px">${methodLabels[enc.method] || enc.method}</p>`
+      : "";
+    // 7.8.7 - el clima real bajo el que ocurrió este encuentro concreto,
+    // solo si el backend lo mandó (los legendarios son independientes
+    // del clima, igual que ya lo eran de la hora).
+    const weatherBanner = enc.weather
+      ? `<p class="tagline" style="margin:0 0 10px">${enc.weather.emoji} ${escHtml(enc.weather.label)}</p>`
+      : "";
+    // 7.8.34/7.8.44 (KAN-367/KAN-377) - evento(s) real(es) activo(s)
+    // ahora mismo, si los hay - nunca oculto, mismo espíritu que el
+    // aviso de clima/hora.
+    const eventsBanner = enc.activeEvents && enc.activeEvents.length
+      ? `<p class="tagline" style="margin:0 0 10px;color:#f5c542;font-weight:600">${enc.activeEvents.map((ev) => `${ev.emoji} ${escHtml(ev.name)}`).join(" · ")}</p>`
+      : "";
+    // 7.8.30 (KAN-363) - solo se destaca lo genuinamente especial: raro
+    // y muy raro llevan su propio aviso, común/poco común no interrumpen
+    // (y legendario ya tiene el suyo propio dorado, más arriba).
+    const RARITY_BANNERS = {
+      rare: { text: "🔵 ¡Encuentro raro!", color: "#4dabf7" },
+      "very-rare": { text: "🟣 ¡Encuentro MUY raro!", color: "#b197fc" },
+    };
+    const rarityBanner = !wild.legendary && RARITY_BANNERS[wild.rarity]
+      ? `<p class="tagline" style="margin:0 0 10px;color:${RARITY_BANNERS[wild.rarity].color};font-weight:600">${RARITY_BANNERS[wild.rarity].text}</p>`
+      : "";
+    const wildSpriteVariant = wild.shiny ? "frontShiny" : "front";
+    els.pokemonExploreBody.innerHTML = `
+      ${legendaryBanner}
+      ${methodBanner}
+      ${weatherBanner}
+      ${eventsBanner}
+      ${rarityBanner}
+      <div style="text-align:center;margin-bottom:8px">${spriteImg(wild.sprites, wildSpriteVariant, wild.emoji, 120)}</div>
+      <div class="integrations-list">
+        <div class="integration-row integration-row--stub"${wild.legendary ? ' style="border:1px solid #f5c542"' : ""}>
+          <span class="integration-ico">${spriteImg(wild.sprites, wildSpriteVariant, wild.emoji, 32)}</span>
+          <span class="integration-info">
+            <span class="integration-name">${wild.shiny ? "✨ " : ""}${escHtml(wild.name)} salvaje (Nv. ${wild.level}) ${cryButton(wild.cries)}</span>
+            <span class="integration-detail">${wild.types.map(escHtml).join("/")} · ${escHtml(wild.nature)}${wild.shiny ? " · ¡SHINY!" : ""}</span>
+          </span>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">
+        <button type="button" class="dk-btn" data-explore-fight="${escHtml(wild.instanceId)}">⚔️ Luchar</button>
+        ${(balls || [])
+          .map((b) => {
+            const disabled = !b.unlimited && b.owned <= 0;
+            const countLabel = b.unlimited ? "∞" : b.owned;
+            return `<button type="button" class="dk-btn${disabled ? " ghost" : ""}" data-explore-capture-ball="${escHtml(b.id)}" data-explore-capture-instance="${escHtml(wild.instanceId)}"${disabled ? " disabled" : ""}>${b.emoji} ${escHtml(b.name)} (${countLabel})</button>`;
+          })
+          .join("")}
+        <button type="button" class="dk-btn ghost" data-explore-run>Huir</button>
+      </div>
+    `;
+    els.pokemonExploreBody.querySelectorAll("[data-explore-capture-ball]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        const t = e.currentTarget;
+        doPokemonCapture(t.getAttribute("data-explore-capture-instance"), t.getAttribute("data-explore-capture-ball")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+    els.pokemonExploreBody.querySelector("[data-explore-fight]")?.addEventListener("click", () => {
+      battleReturnTarget = encounterReturnTarget || renderExploreZoneList;
+      renderBattleTeamPicker().catch((err) => toast(err.message || "Error"));
+    });
+    els.pokemonExploreBody.querySelector("[data-explore-run]")?.addEventListener("click", () => {
+      (encounterReturnTarget || renderExploreZoneList)().catch((err) => toast(err.message || "Error"));
+    });
+  }
+
+  // 7.8.12 (KAN-345) - Sistema de combate real: barra de HP real de
+  // ambos lados, registro de golpes real, Atacar/Capturar/Cambiar/Huir.
+  // Usa el MISMO /api/pokemon/encounter activo que ya usaba la captura
+  // directa - luchar y capturar sin luchar siguen conviviendo.
+  // 7.8.45 (KAN-378) - reestilizado: barra de HP real con las clases
+  // compartidas del 7.8.41 (mismo verde/ámbar/rojo real por umbral, sin
+  // duplicar el color a mano en cada sitio que la usa).
+  function hpBarHtml(current, max) {
+    const pct = Math.max(0, Math.min(100, Math.round((current / max) * 100)));
+    const tier = pct > 50 ? "hp-high" : pct > 20 ? "hp-mid" : "hp-low";
+    return `<div class="poke-bar-track"><div class="poke-bar-fill ${tier}" style="width:${pct}%"></div></div><span class="integration-detail poke-num">${current}/${max} HP</span>`;
+  }
+
+  // 7.8.40 (KAN-373) - mismo selector real de equipo, ahora reutilizado
+  // también para retar a un entrenador itinerante o a un líder de
+  // gimnasio real - `trainerChallenge` (opcional) es {kind, opponentId}.
+  async function renderBattleTeamPicker(trainerChallenge, cancelTarget) {
+    els.pokemonExploreBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const [teamData, dexData] = await Promise.all([
+      api("/api/pokemon/team").catch(() => ({ team: [] })),
+      api("/api/pokemon/dex").catch(() => ({ entries: [] })),
+    ]);
+    const namesByDex = {};
+    for (const e of dexData.entries || []) namesByDex[e.dexNumber] = e;
+    const usable = (teamData.team || []).filter((p) => !p.fainted);
+    const rows = usable
+      .map((p) => {
+        const sp = namesByDex[p.dexNumber];
+        const label = sp && sp.name !== "???" ? `${spriteImg(sp.sprites, p.shiny ? "frontShiny" : "front", sp.emoji, 20)} ${escHtml(sp.name)}` : `#${String(p.dexNumber).padStart(3, "0")}`;
+        return `<button type="button" class="dk-btn ghost" data-battle-pick="${escHtml(p.instanceId)}" style="display:block;width:100%;text-align:left;margin-bottom:6px">${p.shiny ? "✨ " : ""}${label} · Nv.${p.level} · ${p.currentHp}/${p.maxHp ?? p.stats.hp} HP</button>`;
+      })
+      .join("");
+    els.pokemonExploreBody.innerHTML = `
+      <button type="button" class="dk-btn ghost" data-battle-cancel style="margin-bottom:12px">← Cancelar</button>
+      <p class="tagline" style="margin:0 0 10px">Elige con quién luchar.</p>
+      <div class="integrations-list">${rows || `<p class="tagline">No tienes Pokémon disponibles (todos debilitados).</p>`}</div>
+    `;
+    els.pokemonExploreBody.querySelector("[data-battle-cancel]")?.addEventListener("click", () => {
+      (cancelTarget || renderExploreZoneList)().catch((err) => toast(err.message || "Error"));
+    });
+    els.pokemonExploreBody.querySelectorAll("[data-battle-pick]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const instanceId = btn.getAttribute("data-battle-pick");
+        if (trainerChallenge) {
+          startTrainerBattleFlow(trainerChallenge.kind, trainerChallenge.opponentId, instanceId).catch((err) => toast(err.message || "Error"));
+        } else {
+          startBattleFlow(instanceId).catch((err) => toast(err.message || "Error"));
+        }
+      });
+    });
+  }
+
+  // 7.8.45 (KAN-378) - hueco real encontrado en la propia verificación:
+  // si el backend rechaza el combate (p.ej. un Pokémon real "Enfermo"
+  // de verdad, mecánica del 7.8.24), la pantalla se quedaba colgada en
+  // "Empezando el combate…" para siempre (el toast del error se veía y
+  // desaparecía, pero no había forma real de volver salvo la barra de
+  // navegación) - ahora se captura el error real y se vuelve al
+  // selector de equipo con el motivo real visible.
+  async function startBattleFlow(teamInstanceId) {
+    els.pokemonExploreBody.innerHTML = `<p class="tagline">Empezando el combate…</p>`;
+    try {
+      const state = await api("/api/pokemon/battle/start", { method: "POST", body: JSON.stringify({ teamInstanceId }) });
+      renderBattleScreen(state);
+    } catch (err) {
+      toast(err.message || "Error");
+      await renderBattleTeamPicker();
+    }
+  }
+
+  // 7.8.40 (KAN-373) - inicia un combate real contra un entrenador
+  // itinerante o un líder de gimnasio real - mismo motor/pantalla de
+  // combate real ya construidos, solo cambia quién es el rival.
+  async function startTrainerBattleFlow(kind, opponentId, teamInstanceId) {
+    els.pokemonExploreBody.innerHTML = `<p class="tagline">Empezando el combate…</p>`;
+    try {
+      const state = await api("/api/pokemon/battle/trainer-start", { method: "POST", body: JSON.stringify({ kind, opponentId, teamInstanceId }) });
+      renderBattleScreen(state);
+    } catch (err) {
+      toast(err.message || "Error");
+      await renderBattleTeamPicker({ kind, opponentId });
+    }
+  }
+
+  // 7.8.32 (KAN-365) - sprite real oficial por especie (front/back/
+  // shiny/artwork, servido como estático desde ui/assets/pokemon-
+  // sprites/). Si `sprites` no viene (especie todavía no vista en la
+  // Pokédex) o la imagen falla al cargar, cae al emoji de siempre - el
+  // emoji nunca desaparece, es el respaldo real, no un roto.
+  function spriteImg(sprites, variant, emoji, size) {
+    const url = sprites && sprites[variant];
+    const fallback = escHtml(emoji || "❓");
+    if (!url) return fallback;
+    const safeFallback = fallback.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+    return `<img src="${escHtml(url)}" alt="" style="width:${size}px;height:${size}px;object-fit:contain;image-rendering:pixelated" onerror="this.outerHTML='${safeFallback}'">`;
+  }
+
+  // 7.8.33 (KAN-366) - grito real oficial por especie (repositorio
+  // público PokeAPI/cries, mismo contexto de uso personal no comercial
+  // ya confirmado por el usuario en 7.8.32). Botón real para
+  // reproducirlo bajo demanda + reproducción automática una vez en los
+  // momentos reales donde el juego original también lo hace (aparece
+  // un salvaje, abres la ficha de un Pokémon).
+  function cryButton(cries, size) {
+    const url = cries && cries.latest;
+    if (!url) return "";
+    return `<button type="button" class="poke-cry-btn" data-cry-url="${escHtml(url)}" style="font-size:${size || 16}px;background:none;border:none;cursor:pointer;line-height:1;vertical-align:middle" aria-label="Reproducir grito">🔊</button>`;
+  }
+
+  function playCry(cries) {
+    const url = cries && cries.latest;
+    if (!url) return;
+    try {
+      const audio = new Audio(url);
+      audio.play().catch(() => {});
+    } catch {
+      /* reproducción de audio no disponible - no bloquea nada */
+    }
+  }
+
+  // Un único listener delegado para cualquier botón de grito ya
+  // pintado en la pantalla (mismo patrón que la barra de pestañas del
+  // 7.8.41 - no hace falta enganchar cada botón a mano).
+  document.body.addEventListener("click", (e) => {
+    const cryBtn = e.target.closest("[data-cry-url]");
+    if (cryBtn) {
+      try {
+        new Audio(cryBtn.getAttribute("data-cry-url")).play().catch(() => {});
+      } catch {
+        /* ignorado */
+      }
+    }
+  });
+
+  // 7.8.15 (KAN-348) - nombre real de la habilidad bajo cada Pokémon
+  // (incluye la posibilidad de que le haya tocado la oculta, real pero
+  // rara - 1/20, ver pokemonEngineService.js).
+  function abilityTagHtml(ability) {
+    return ability ? `<span class="integration-detail">Habilidad: ${escHtml(ability.name)}</span>` : "";
+  }
+
+  // 7.8.38 (KAN-371) - insignia real de estado alterado (quemadura/
+  // veneno/parálisis/sueño/congelación) y flechas reales de stat stage
+  // (-6..+6) todavía activas este combate, para que se vea de verdad lo
+  // que está afectando al Pokémon ahora mismo.
+  const STAT_STAGE_SHORT = { attack: "ATQ", defense: "DEF", spAttack: "ATE", spDefense: "DFE", speed: "VEL" };
+  function statusBadgeHtml(status) {
+    return status ? `<span class="integration-detail" style="color:#ffa94d">${status.emoji} ${escHtml(status.label)}</span>` : "";
+  }
+  function stagesHtml(stages) {
+    if (!stages) return "";
+    const parts = Object.entries(stages)
+      .filter(([, v]) => v)
+      .map(([k, v]) => `${STAT_STAGE_SHORT[k] || k}${v > 0 ? "+" : ""}${v}`);
+    return parts.length ? `<span class="integration-detail">${parts.join(" · ")}</span>` : "";
+  }
+
+  function renderBattleScreen(state) {
+    const logHtml = state.log
+      .slice(-6)
+      .map((l) => `<p class="tagline" style="margin:2px 0;font-size:13px">${escHtml(l)}</p>`)
+      .join("");
+    // 7.8.40 (KAN-373) - rival real: "salvaje" para un encuentro de
+    // zona real, o el nombre real del entrenador/líder + progreso real
+    // de su equipo (p.ej. "de Brock · Pokémon 1/2") - nunca se puede
+    // Capturar el Pokémon de un entrenador real, el botón ni aparece.
+    const isTrainerBattle = state.wild.opponentKind && state.wild.opponentKind !== "wild";
+    const wildSideLabel = isTrainerBattle
+      ? `de ${escHtml(state.wild.opponentName)} · Pokémon ${state.wild.opponentIndex + 1}/${state.wild.opponentTeamSize}`
+      : "salvaje";
+    const badgeBanner = state.badgeEarned
+      ? `<p class="tagline" style="margin:0 0 10px;color:#f5c542;font-weight:600">${state.badgeEarned.emoji} ¡Has ganado la ${escHtml(state.badgeEarned.name)}!</p>`
+      : "";
+    const trainerDefeatBanner = state.message && !state.badgeEarned
+      ? `<p class="tagline" style="margin:0 0 10px;color:#51cf66;font-weight:600">${escHtml(state.message)}</p>`
+      : "";
+    const outcomeBanner = badgeBanner || trainerDefeatBanner || (state.outcome === "wild_fainted"
+      ? `<p class="tagline" style="margin:0 0 10px;color:#51cf66;font-weight:600">¡Has ganado el combate!</p>`
+      : state.outcome === "player_fainted"
+        ? `<p class="tagline" style="margin:0 0 10px;color:#ff6b6b;font-weight:600">${escHtml(state.player.name)} se ha debilitado.</p>`
+        : "");
+    els.pokemonExploreBody.innerHTML = `
+      <div class="poke-combatant"${state.wild.legendary ? ' style="border-color:#f5c542"' : ""}>
+        <div class="poke-combatant-avatar">${spriteImg(state.wild.sprites, "front", state.wild.emoji, 48)}</div>
+        <div class="poke-combatant-info">
+          <div style="font-weight:700" class="poke-title">${escHtml(state.wild.name)} ${wildSideLabel} <span class="poke-num">(Nv.${state.wild.level})</span> ${cryButton(state.wild.cries)}</div>
+          ${hpBarHtml(state.wild.currentHp, state.wild.maxHp)}
+          <div>${abilityTagHtml(state.wild.ability)} ${statusBadgeHtml(state.wild.status)} ${stagesHtml(state.wild.stages)}</div>
+        </div>
+      </div>
+      <div class="poke-combatant">
+        <div class="poke-combatant-avatar">${spriteImg(state.player.sprites, "back", state.player.emoji, 48)}</div>
+        <div class="poke-combatant-info">
+          <div style="font-weight:700" class="poke-title">${escHtml(state.player.name)} <span class="poke-num">(Nv.${state.player.level})</span> ${cryButton(state.player.cries)}</div>
+          ${hpBarHtml(state.player.currentHp, state.player.maxHp)}
+          <div>${abilityTagHtml(state.player.ability)} ${statusBadgeHtml(state.player.status)} ${stagesHtml(state.player.stages)}</div>
+        </div>
+      </div>
+      ${outcomeBanner}
+      <div class="poke-log">${logHtml}</div>
+      <div class="poke-action-grid">
+        ${!state.over ? `<button type="button" class="poke-action attack" data-battle-attack>⚔️ Atacar</button>` : ""}
+        ${!state.over ? `<button type="button" class="poke-action item" data-battle-item>🧪 Objeto</button>` : ""}
+        ${!state.over && !isTrainerBattle ? `<button type="button" class="poke-action capture" data-battle-capture>🔴 Capturar</button>` : ""}
+        ${!state.over || state.outcome === "player_fainted" ? `<button type="button" class="poke-action switch" data-battle-switch>🔄 Cambiar</button>` : ""}
+        ${state.outcome === "wild_fainted" ? `<button type="button" class="poke-action continue-battle" data-battle-continue>Continuar</button>` : `<button type="button" class="poke-action flee" data-battle-flee>Huir</button>`}
+      </div>
+    `;
+    els.pokemonExploreBody.querySelector("[data-battle-attack]")?.addEventListener("click", () => {
+      renderBattleMovePicker(state).catch((err) => toast(err.message || "Error"));
+    });
+    els.pokemonExploreBody.querySelector("[data-battle-item]")?.addEventListener("click", () => {
+      renderBattleItemPicker().catch((err) => toast(err.message || "Error"));
+    });
+    els.pokemonExploreBody.querySelector("[data-battle-capture]")?.addEventListener("click", () => {
+      renderBattleCaptureBallPicker().catch((err) => toast(err.message || "Error"));
+    });
+    els.pokemonExploreBody.querySelector("[data-battle-switch]")?.addEventListener("click", () => {
+      renderBattleSwitchPicker().catch((err) => toast(err.message || "Error"));
+    });
+    els.pokemonExploreBody.querySelector("[data-battle-flee]")?.addEventListener("click", () => {
+      doBattleFlee().catch((err) => toast(err.message || "Error"));
+    });
+    // Un salvaje debilitado en combate ya no se puede capturar (igual
+    // que en el juego real) - el servidor ya limpió el encuentro al
+    // terminar el combate, así que "Continuar" solo vuelve al panel real
+    // de origen (Explorar o Medallero) sin llamar de nuevo a
+    // /battle/flee (ya no hay nada activo).
+    els.pokemonExploreBody.querySelector("[data-battle-continue]")?.addEventListener("click", () => {
+      (battleReturnTarget || renderExploreZoneList)().catch((err) => toast(err.message || "Error"));
+    });
+  }
+
+  // 7.8.14 (KAN-347) - selector real de movimiento: los 4 reales del
+  // Pokémon (tipo/potencia/PP restante), deshabilitado si no le queda
+  // PP - o Forcejeo si de verdad ya no le queda ninguno (mecánica real
+  // de respaldo, siempre disponible).
+  const MOVE_TYPE_EMOJI = {
+    normal: "⚪", fire: "🔥", water: "💧", electric: "⚡", grass: "🌿", ice: "❄️", fighting: "🥊", poison: "☠️",
+    ground: "🌍", flying: "🕊️", psychic: "🔮", bug: "🐛", rock: "🪨", ghost: "👻", dragon: "🐉", steel: "⚙️",
+    dark: "🌑", fairy: "✨",
+  };
+  async function renderBattleMovePicker(state) {
+    const moveset = state.player.moveset || [];
+    const anyPpLeft = moveset.some((m) => m.ppRemaining > 0);
+    // 7.8.38 (KAN-371) - los movimientos de apoyo reales (categoría
+    // "status": Gruñido, Danza Espada, Onda Trueno...) no tienen
+    // potencia de daño ni siempre precisión numérica (los que se
+    // dirigen a uno mismo, accuracy null, siempre aciertan) - se
+    // muestran con su propio texto en vez de "Pot.0 · Prec.null%".
+    const rows = anyPpLeft
+      ? moveset
+          .map((m) => {
+            const disabled = m.ppRemaining <= 0;
+            const isStatus = m.category === "status";
+            const statLine = isStatus
+              ? `Apoyo${m.accuracy != null ? ` · Prec.${m.accuracy}%` : ""}`
+              : `Pot.${m.power} · Prec.${m.accuracy}%`;
+            return `<button type="button" class="dk-btn${disabled ? " ghost" : ""}" data-battle-move="${escHtml(m.id)}"${disabled ? " disabled" : ""} style="display:block;width:100%;text-align:left;margin-bottom:6px">${MOVE_TYPE_EMOJI[m.type] || ""} ${escHtml(m.name)} · ${statLine} · PP ${m.ppRemaining}/${m.pp}</button>`;
+          })
+          .join("")
+      : `<button type="button" class="dk-btn" data-battle-move="struggle" style="display:block;width:100%;text-align:left;margin-bottom:6px">💢 Forcejeo (sin PP - daña también a quien lo usa)</button>`;
+    els.pokemonExploreBody.innerHTML = `
+      <button type="button" class="dk-btn ghost" data-battle-cancel style="margin-bottom:12px">← Cancelar</button>
+      <p class="tagline" style="margin:0 0 10px">Elige un movimiento.</p>
+      <div class="integrations-list">${rows}</div>
+    `;
+    els.pokemonExploreBody.querySelector("[data-battle-cancel]")?.addEventListener("click", () => {
+      renderBattleScreen(state);
+    });
+    els.pokemonExploreBody.querySelectorAll("[data-battle-move]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        doBattleAttack(btn.getAttribute("data-battle-move")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+  }
+
+  async function doBattleAttack(moveId) {
+    const state = await api("/api/pokemon/battle/attack", { method: "POST", body: JSON.stringify({ moveId }) });
+    renderBattleScreen(state);
+  }
+
+  // 7.8.38 (KAN-371) - objetos de combate reales (X Attack/X Defense/X
+  // Speed/X Special, catálogo del 7.8.10, ahora sí funcionales): solo
+  // se listan los que el jugador de verdad tiene, filtrados por
+  // categoría "battle" del mismo catálogo real que usa la tienda.
+  async function renderBattleItemPicker() {
+    els.pokemonExploreBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const data = await api("/api/pokemon/shop").catch(() => ({ catalog: [] }));
+    const owned = (data.catalog || []).filter((it) => it.category === "battle" && it.owned > 0);
+    const rows = owned
+      .map((it) => `<button type="button" class="dk-btn ghost" data-battle-item-use="${escHtml(it.id)}" style="display:block;width:100%;text-align:left;margin-bottom:6px">${it.emoji} ${escHtml(it.name)} (×${it.owned})</button>`)
+      .join("");
+    els.pokemonExploreBody.innerHTML = `
+      <button type="button" class="dk-btn ghost" data-battle-cancel style="margin-bottom:12px">← Cancelar</button>
+      <p class="tagline" style="margin:0 0 10px">Elige un objeto (gastas el turno).</p>
+      <div class="integrations-list">${rows || `<p class="tagline">No tienes objetos de combate.</p>`}</div>
+    `;
+    els.pokemonExploreBody.querySelector("[data-battle-cancel]")?.addEventListener("click", async () => {
+      const state = await api("/api/pokemon/battle").then((d) => d.active).catch(() => null);
+      if (state) renderBattleScreen(state);
+    });
+    els.pokemonExploreBody.querySelectorAll("[data-battle-item-use]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const state = await api("/api/pokemon/battle/item", { method: "POST", body: JSON.stringify({ itemId: btn.getAttribute("data-battle-item-use") }) }).catch((err) => {
+          toast(err.message || "Error");
+          return null;
+        });
+        if (state) renderBattleScreen(state);
+      });
+    });
+  }
+
+  // Capturar a media pelea reusa exactamente el mismo flujo real de
+  // captura (mismo endpoint, misma animación de sacudidas) - la única
+  // diferencia es que ahora el HP real ya debilitado por el combate
+  // decide la probabilidad, no la aproximación del 7.8.9.
+  async function renderBattleCaptureBallPicker() {
+    els.pokemonExploreBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const [active, ballsData] = await Promise.all([
+      api("/api/pokemon/encounter").catch(() => ({ active: null })),
+      api("/api/pokemon/balls").catch(() => ({ balls: [] })),
+    ]);
+    if (!active.active) {
+      toast("No hay encuentro activo");
+      renderExploreZoneList().catch((err) => toast(err.message || "Error"));
+      return;
+    }
+    const instanceId = active.active.instanceId;
+    const rows = (ballsData.balls || [])
+      .map((b) => {
+        const disabled = !b.unlimited && b.owned <= 0;
+        const countLabel = b.unlimited ? "∞" : b.owned;
+        return `<button type="button" class="dk-btn${disabled ? " ghost" : ""}" data-battle-capture-ball="${escHtml(b.id)}"${disabled ? " disabled" : ""} style="display:block;width:100%;text-align:left;margin-bottom:6px">${b.emoji} ${escHtml(b.name)} (${countLabel})</button>`;
+      })
+      .join("");
+    els.pokemonExploreBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">Elige con qué bola capturar.</p>
+      <div class="integrations-list">${rows}</div>
+    `;
+    els.pokemonExploreBody.querySelectorAll("[data-battle-capture-ball]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        doPokemonCapture(instanceId, btn.getAttribute("data-battle-capture-ball")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+  }
+
+  async function renderBattleSwitchPicker() {
+    els.pokemonExploreBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const [teamData, dexData] = await Promise.all([
+      api("/api/pokemon/team").catch(() => ({ team: [] })),
+      api("/api/pokemon/dex").catch(() => ({ entries: [] })),
+    ]);
+    const namesByDex = {};
+    for (const e of dexData.entries || []) namesByDex[e.dexNumber] = e;
+    const usable = (teamData.team || []).filter((p) => !p.fainted);
+    const rows = usable
+      .map((p) => {
+        const sp = namesByDex[p.dexNumber];
+        const label = sp && sp.name !== "???" ? `${spriteImg(sp.sprites, p.shiny ? "frontShiny" : "front", sp.emoji, 20)} ${escHtml(sp.name)}` : `#${String(p.dexNumber).padStart(3, "0")}`;
+        return `<button type="button" class="dk-btn ghost" data-battle-switch-to="${escHtml(p.instanceId)}" style="display:block;width:100%;text-align:left;margin-bottom:6px">${label} · Nv.${p.level} · ${p.currentHp}/${p.maxHp ?? p.stats.hp} HP</button>`;
+      })
+      .join("");
+    els.pokemonExploreBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">Elige a quién cambiar.</p>
+      <div class="integrations-list">${rows || `<p class="tagline">No tienes más Pokémon disponibles.</p>`}</div>
+    `;
+    els.pokemonExploreBody.querySelectorAll("[data-battle-switch-to]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const state = await api("/api/pokemon/battle/switch", { method: "POST", body: JSON.stringify({ instanceId: btn.getAttribute("data-battle-switch-to") }) }).catch((err) => {
+          toast(err.message || "Error");
+          return null;
+        });
+        if (state) renderBattleScreen(state);
+      });
+    });
+  }
+
+  async function doBattleFlee() {
+    await api("/api/pokemon/battle/flee", { method: "POST" });
+    (battleReturnTarget || renderExploreZoneList)().catch((err) => toast(err.message || "Error"));
+  }
+
+  async function doPokemonCapture(instanceId, ballId) {
+    els.pokemonExploreBody.innerHTML = `<p class="tagline">Lanzando ${escHtml(ballId || "pokeball")}…</p>`;
+    const result = await api("/api/pokemon/capture", {
+      method: "POST",
+      body: JSON.stringify({ instanceId, ballId: ballId || "pokeball" }),
+    });
+    // 7.8.9 (KAN-342) - animación real de sacudidas (0-4), una a una,
+    // antes de revelar el resultado - refleja el mecanismo real de
+    // captura (backend ya decidió cuántas superó) en vez de un
+    // resultado plano sin suspense. 7.8.45 (KAN-378) - reestilizado:
+    // bola real con tambaleo real por CSS + puntos de progreso reales.
+    const shakeCount = result.shakes || 0;
+    for (let i = 0; i < shakeCount; i++) {
+      els.pokemonExploreBody.innerHTML = `
+        <div class="poke-ball-shake">🔴</div>
+        <div class="poke-shake-dots">${"● ".repeat(i + 1)}${"○ ".repeat(Math.max(0, 3 - i))}</div>
+        <p class="tagline" style="text-align:center">sacudida ${i + 1}${i === 3 ? "..." : ""}</p>
+      `;
+      await new Promise((r) => setTimeout(r, 450));
+    }
+    els.pokemonExploreBody.innerHTML = `
+      <div class="poke-result-card">
+        <div class="poke-result-ico">${result.success ? "✅" : "❌"}</div>
+        <p class="tagline" style="font-size:16px;margin:0">${escHtml(result.message)}</p>
+      </div>
+      <button type="button" class="poke-action switch" style="width:100%" data-explore-again>Seguir explorando</button>
+    `;
+    els.pokemonExploreBody.querySelector("[data-explore-again]")?.addEventListener("click", () => {
+      (encounterReturnTarget || renderExploreZoneList)().catch((err) => toast(err.message || "Error"));
+    });
+  }
+
+  async function openPokemonExplorePanel() {
+    if (!els.pokemonExplorePanel || !els.pokemonExploreBody) {
+      toast("Explorar no disponible");
+      return;
+    }
+    closeSysHub();
+    hideAllPokeScreens();
+    els.pokemonExplorePanel.hidden = false;
+    els.pokemonExploreBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    await renderExploreZoneList();
+  }
+
+  els.pokemonExploreBack?.addEventListener("click", () => {
+    closePokemonExplorePanel();
+    setAppNav("servicios");
+  });
+  els.pokemonExplorePanel?.addEventListener("click", (e) => {
+    if (e.target === els.pokemonExplorePanel) {
+      closePokemonExplorePanel();
+      setAppNav("servicios");
+    }
+  });
+
+  // 7.8.10 (KAN-343) - Mochila real: inventario + tienda + Poké$, mismo
+  // catálogo real (content/pokemon/items.json) que ya usa la fórmula de
+  // captura para las bolas. Comida/Caramelo Raro/piedras evolutivas
+  // tienen efecto real (amistad/nivel/evolución); pociones/curas de
+  // estado/objetos de combate se pueden poseer/comprar/vender pero su
+  // "usar" se rechaza con un mensaje honesto (necesitan combate real,
+  // 7.8.12, todavía sin construir).
+  els.pokebagPanel = document.getElementById("pokebag-panel");
+  els.pokebagBody = document.getElementById("pokebag-body");
+  els.pokebagBack = document.getElementById("pokebag-back");
+
+  const POKEBAG_CATEGORY_LABELS = {
+    balls: "🎯 Bolas",
+    potions: "💊 Pociones",
+    status: "🧪 Curas de estado",
+    evolution: "💎 Piedras evolutivas",
+    battle: "⚔️ Objetos de combate",
+    special: "🍬 Especiales",
+    food: "🍇 Comida",
+  };
+  // 7.8.38 (KAN-371) - "cure" (curas de estado) ya tiene efecto real -
+  // el estado alterado ahora existe de verdad y persiste como el HP.
+  // Hueco real encontrado de paso al verificar en vivo: "heal"/
+  // "heal_and_cure"/"revive" (Pociones/Full Restore/Revivir) llevan
+  // funcionando de verdad desde el 7.8.12 (currentHp real), pero nunca
+  // se habían añadido aquí - la Mochila los mostraba como si no
+  // tuvieran efecto reconocido. Se arregla de paso, mismo alcance.
+  const POKEBAG_USABLE_TYPES = ["friendship", "level_up", "evolve_item", "cure", "heal", "heal_and_cure", "revive"];
+  let pokebagView = "inventory";
+
+  function closePokebagPanel() {
+    if (els.pokebagPanel) els.pokebagPanel.hidden = true;
+  }
+
+  function pokebagTabsHtml() {
+    return `<div style="display:flex;gap:8px;margin-bottom:12px">
+      <button type="button" class="dk-btn${pokebagView === "inventory" ? "" : " ghost"}" data-pokebag-tab="inventory">🎒 Mochila</button>
+      <button type="button" class="dk-btn${pokebagView === "shop" ? "" : " ghost"}" data-pokebag-tab="shop">🏪 Tienda</button>
+    </div>`;
+  }
+
+  async function renderPokebagPanel() {
+    els.pokebagBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const data = await api("/api/pokemon/shop").catch(() => ({ money: 0, catalog: [] }));
+    const moneyHtml = `<div class="poke-list-card" style="margin-bottom:12px">
+      <div class="poke-list-card-avatar">💰</div>
+      <div class="poke-list-card-body"><div class="poke-list-card-title">${data.money} Poké$</div></div>
+    </div>`;
+
+    const catalog = data.catalog || [];
+    const grouped = {};
+    for (const it of catalog) {
+      if (pokebagView === "inventory" && it.owned <= 0 && !it.unlimited) continue;
+      (grouped[it.category] = grouped[it.category] || []).push(it);
+    }
+    const categories = Object.keys(POKEBAG_CATEGORY_LABELS).filter((c) => grouped[c]);
+
+    const rowsHtml =
+      categories
+        .map((cat) => {
+          const rows = grouped[cat]
+            .map((it) => {
+              const ownedLabel = it.unlimited ? "∞" : it.owned;
+              const usable = POKEBAG_USABLE_TYPES.includes(it.effect.type);
+              let actionsHtml;
+              if (pokebagView === "shop") {
+                const buyBtn = it.buyable ? `<button type="button" class="dk-btn ghost" data-pokebag-buy="${escHtml(it.id)}">Comprar (${it.price} 💰)</button>` : "";
+                const sellBtn = it.sellable && it.owned > 0 ? `<button type="button" class="dk-btn ghost" data-pokebag-sell="${escHtml(it.id)}">Vender (${it.sellPrice} 💰)</button>` : "";
+                actionsHtml = `<div style="display:flex;gap:6px;flex-wrap:wrap">${buyBtn}${sellBtn}</div>`;
+              } else if (usable) {
+                actionsHtml = `<button type="button" class="dk-btn ghost" data-pokebag-use="${escHtml(it.id)}">Usar</button>`;
+              } else if (it.effect.type === "battle_boost") {
+                // 7.8.38 (KAN-371) - objetos de combate reales, pero
+                // solo se pueden usar DURANTE un combate activo (suben
+                // un stat stage real que no existe fuera de combate).
+                actionsHtml = `<span class="integration-detail">se usa durante el combate</span>`;
+              } else if (it.category === "balls") {
+                actionsHtml = `<span class="integration-detail">se usa al capturar</span>`;
+              } else {
+                actionsHtml = `<span class="integration-detail">sin efecto reconocido</span>`;
+              }
+              return `<div class="poke-list-card" style="flex-wrap:wrap">
+                <div class="poke-list-card-avatar">${it.emoji}</div>
+                <div class="poke-list-card-body">
+                  <div class="poke-list-card-title">${escHtml(it.name)}${pokebagView === "inventory" ? ` (×${ownedLabel})` : ""}</div>
+                  <div class="poke-list-card-sub">${pokebagView === "shop" ? `Tienes: ${ownedLabel}` : ""}</div>
+                </div>
+                ${actionsHtml}
+              </div>`;
+            })
+            .join("");
+          return `<p class="tagline" style="margin:14px 0 6px;font-weight:600">${POKEBAG_CATEGORY_LABELS[cat]}</p><div>${rows}</div>`;
+        })
+        .join("") || `<p class="tagline">${pokebagView === "inventory" ? "No tienes objetos todavía." : "Sin objetos."}</p>`;
+
+    els.pokebagBody.innerHTML = `${moneyHtml}${pokebagTabsHtml()}${rowsHtml}`;
+
+    els.pokebagBody.querySelectorAll("[data-pokebag-tab]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        pokebagView = btn.getAttribute("data-pokebag-tab");
+        renderPokebagPanel().catch((err) => toast(err.message || "Error"));
+      });
+    });
+    els.pokebagBody.querySelectorAll("[data-pokebag-buy]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        doPokebagTransaction("buy", btn.getAttribute("data-pokebag-buy")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+    els.pokebagBody.querySelectorAll("[data-pokebag-sell]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        doPokebagTransaction("sell", btn.getAttribute("data-pokebag-sell")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+    els.pokebagBody.querySelectorAll("[data-pokebag-use]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        renderPokebagUsePicker(btn.getAttribute("data-pokebag-use")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+  }
+
+  async function doPokebagTransaction(action, itemId) {
+    await api(`/api/pokemon/shop/${action}`, { method: "POST", body: JSON.stringify({ itemId, quantity: 1 }) });
+    await renderPokebagPanel();
+  }
+
+  async function renderPokebagUsePicker(itemId) {
+    els.pokebagBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const [teamData, dexData] = await Promise.all([
+      api("/api/pokemon/team").catch(() => ({ team: [] })),
+      api("/api/pokemon/dex").catch(() => ({ entries: [] })),
+    ]);
+    const team = teamData.team || [];
+    const namesByDex = {};
+    for (const e of dexData.entries || []) namesByDex[e.dexNumber] = e;
+    const rows = team
+      .map((p) => {
+        const sp = namesByDex[p.dexNumber];
+        const label = sp && sp.name !== "???" ? `${spriteImg(sp.sprites, p.shiny ? "frontShiny" : "front", sp.emoji, 20)} ${escHtml(sp.name)}` : `#${String(p.dexNumber).padStart(3, "0")}`;
+        return `<button type="button" class="dk-btn ghost" data-pokebag-use-target="${escHtml(p.instanceId)}" style="display:block;width:100%;text-align:left;margin-bottom:6px">${p.shiny ? "✨ " : ""}${label} · Nv.${p.level}</button>`;
+      })
+      .join("");
+    els.pokebagBody.innerHTML = `
+      <button type="button" class="dk-btn ghost" data-pokebag-cancel style="margin-bottom:12px">← Cancelar</button>
+      <p class="tagline" style="margin:0 0 10px">Elige un Pokémon de tu equipo para usar el objeto.</p>
+      <div class="integrations-list">${rows || `<p class="tagline">No tienes Pokémon en el equipo.</p>`}</div>
+    `;
+    els.pokebagBody.querySelector("[data-pokebag-cancel]")?.addEventListener("click", () => {
+      renderPokebagPanel().catch((err) => toast(err.message || "Error"));
+    });
+    els.pokebagBody.querySelectorAll("[data-pokebag-use-target]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        doUseItem(itemId, btn.getAttribute("data-pokebag-use-target")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+  }
+
+  async function doUseItem(itemId, instanceId) {
+    els.pokebagBody.innerHTML = `<p class="tagline">Usando objeto…</p>`;
+    const result = await api("/api/pokemon/items/use", { method: "POST", body: JSON.stringify({ itemId, instanceId }) });
+    els.pokebagBody.innerHTML = `
+      <p class="tagline" style="font-size:16px;margin:0 0 14px">✅ ${escHtml(result.message)}</p>
+      <button type="button" class="dk-btn" data-pokebag-continue>Volver a la mochila</button>
+    `;
+    els.pokebagBody.querySelector("[data-pokebag-continue]")?.addEventListener("click", () => {
+      renderPokebagPanel().catch((err) => toast(err.message || "Error"));
+    });
+  }
+
+  async function openPokebagPanel() {
+    if (!els.pokebagPanel || !els.pokebagBody) {
+      toast("Mochila no disponible");
+      return;
+    }
+    closeSysHub();
+    hideAllPokeScreens();
+    pokebagView = "inventory";
+    els.pokebagPanel.hidden = false;
+    await renderPokebagPanel();
+  }
+
+  els.pokebagBack?.addEventListener("click", () => {
+    closePokebagPanel();
+    setAppNav("servicios");
+  });
+  els.pokebagPanel?.addEventListener("click", (e) => {
+    if (e.target === els.pokebagPanel) {
+      closePokebagPanel();
+      setAppNav("servicios");
+    }
+  });
+
+  // 7.8.38 (KAN-371) - selector real de movimientos: elige un Pokémon
+  // del equipo, luego marca hasta 4 movimientos reales del pool
+  // disponible (su moveset canónico + apoyo universal) y guarda.
+  els.pokemovesPanel = document.getElementById("pokemoves-panel");
+  els.pokemovesBody = document.getElementById("pokemoves-body");
+  els.pokemovesBack = document.getElementById("pokemoves-back");
+
+  function closePokemovesPanel() {
+    if (els.pokemovesPanel) els.pokemovesPanel.hidden = true;
+  }
+
+  async function openPokemovesPanel() {
+    if (!els.pokemovesPanel || !els.pokemovesBody) {
+      toast("Movimientos no disponible");
+      return;
+    }
+    closeSysHub();
+    hideAllPokeScreens();
+    els.pokemovesPanel.hidden = false;
+    await renderPokemovesTeamPicker();
+  }
+
+  async function renderPokemovesTeamPicker() {
+    els.pokemovesBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const [teamData, dexData] = await Promise.all([
+      api("/api/pokemon/team").catch(() => ({ team: [] })),
+      api("/api/pokemon/dex").catch(() => ({ entries: [] })),
+    ]);
+    const namesByDex = {};
+    for (const e of dexData.entries || []) namesByDex[e.dexNumber] = e;
+    const team = teamData.team || [];
+    const rows = team
+      .map((p) => {
+        const sp = namesByDex[p.dexNumber];
+        const label = sp && sp.name !== "???" ? `${spriteImg(sp.sprites, p.shiny ? "frontShiny" : "front", sp.emoji, 20)} ${escHtml(sp.name)}` : `#${String(p.dexNumber).padStart(3, "0")}`;
+        return `<button type="button" class="dk-btn ghost" data-pokemoves-pick="${escHtml(p.instanceId)}" style="display:block;width:100%;text-align:left;margin-bottom:6px">${p.shiny ? "✨ " : ""}${label} · Nv.${p.level}</button>`;
+      })
+      .join("");
+    els.pokemovesBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">Elige un Pokémon de tu equipo.</p>
+      <div class="integrations-list">${rows || `<p class="tagline">No tienes Pokémon en el equipo.</p>`}</div>
+    `;
+    els.pokemovesBody.querySelectorAll("[data-pokemoves-pick]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        renderPokemovesEditor(btn.getAttribute("data-pokemoves-pick")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+  }
+
+  async function renderPokemovesEditor(instanceId) {
+    els.pokemovesBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const data = await api(`/api/pokemon/team/${instanceId}/moves`).catch((err) => {
+      toast(err.message || "Error");
+      return null;
+    });
+    if (!data) {
+      renderPokemovesTeamPicker().catch((err) => toast(err.message || "Error"));
+      return;
+    }
+    let selected = [...data.equipped];
+    const renderRows = () => {
+      return data.pool
+        .map((m) => {
+          const isOn = selected.includes(m.id);
+          const isStatus = m.category === "status";
+          const statLine = isStatus ? `Apoyo${m.accuracy != null ? ` · Prec.${m.accuracy}%` : ""}` : `Pot.${m.power} · Prec.${m.accuracy}%`;
+          return `<button type="button" class="dk-btn${isOn ? "" : " ghost"}" data-pokemoves-toggle="${escHtml(m.id)}" style="display:block;width:100%;text-align:left;margin-bottom:6px">${isOn ? "✅" : "⬜"} ${escHtml(m.name)} · ${statLine} · PP ${m.pp}</button>`;
+        })
+        .join("");
+    };
+    const renderBody = () => {
+      els.pokemovesBody.innerHTML = `
+        <button type="button" class="dk-btn ghost" data-pokemoves-cancel style="margin-bottom:12px">← Cambiar de Pokémon</button>
+        <p class="tagline" style="margin:0 0 10px">Marca hasta 4 movimientos (${selected.length}/4). Puedes traer movimientos de apoyo aunque sacrifiques daño.</p>
+        <div class="integrations-list">${renderRows()}</div>
+        <button type="button" class="dk-btn" data-pokemoves-save style="margin-top:12px" ${selected.length ? "" : "disabled"}>Guardar</button>
+      `;
+      els.pokemovesBody.querySelector("[data-pokemoves-cancel]")?.addEventListener("click", () => {
+        renderPokemovesTeamPicker().catch((err) => toast(err.message || "Error"));
+      });
+      els.pokemovesBody.querySelectorAll("[data-pokemoves-toggle]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-pokemoves-toggle");
+          if (selected.includes(id)) {
+            selected = selected.filter((x) => x !== id);
+          } else if (selected.length < 4) {
+            selected.push(id);
+          } else {
+            toast("Ya tienes 4 movimientos marcados - quita uno primero");
+            return;
+          }
+          renderBody();
+        });
+      });
+      els.pokemovesBody.querySelector("[data-pokemoves-save]")?.addEventListener("click", async () => {
+        await api(`/api/pokemon/team/${instanceId}/moves`, { method: "POST", body: JSON.stringify({ moves: selected }) }).catch((err) => {
+          toast(err.message || "Error");
+          return null;
+        });
+        toast("Movimientos guardados");
+        renderPokemovesTeamPicker().catch((err) => toast(err.message || "Error"));
+      });
+    };
+    renderBody();
+  }
+
+  els.pokemovesBack?.addEventListener("click", () => {
+    closePokemovesPanel();
+    setAppNav("servicios");
+  });
+  els.pokemovesPanel?.addEventListener("click", (e) => {
+    if (e.target === els.pokemovesPanel) {
+      closePokemovesPanel();
+      setAppNav("servicios");
+    }
+  });
+
+  // 7.8.43 (KAN-376) - Entrenamiento real: asignación de puntos EV por
+  // Pokémon del equipo, mismo patrón exacto que Movimientos (selector
+  // de Pokémon → editor), reglas reales (máx 252/stat, máx 510 total)
+  // ya validadas en el backend - aquí solo se refleja/envía.
+  els.poketrainPanel = document.getElementById("poketrain-panel");
+  els.poketrainBody = document.getElementById("poketrain-body");
+  els.poketrainBack = document.getElementById("poketrain-back");
+
+  function closePoketrainPanel() {
+    if (els.poketrainPanel) els.poketrainPanel.hidden = true;
+  }
+
+  async function openPoketrainPanel() {
+    if (!els.poketrainPanel || !els.poketrainBody) {
+      toast("Entrenamiento no disponible");
+      return;
+    }
+    closeSysHub();
+    hideAllPokeScreens();
+    els.poketrainPanel.hidden = false;
+    await renderPoketrainTeamPicker();
+  }
+
+  async function renderPoketrainTeamPicker() {
+    els.poketrainBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const [teamData, dexData] = await Promise.all([
+      api("/api/pokemon/team").catch(() => ({ team: [] })),
+      api("/api/pokemon/dex").catch(() => ({ entries: [] })),
+    ]);
+    const namesByDex = {};
+    for (const e of dexData.entries || []) namesByDex[e.dexNumber] = e;
+    const team = teamData.team || [];
+    const rows = team
+      .map((p) => {
+        const sp = namesByDex[p.dexNumber];
+        const label = sp && sp.name !== "???" ? `${spriteImg(sp.sprites, p.shiny ? "frontShiny" : "front", sp.emoji, 20)} ${escHtml(sp.name)}` : `#${String(p.dexNumber).padStart(3, "0")}`;
+        return `<button type="button" class="dk-btn ghost" data-poketrain-pick="${escHtml(p.instanceId)}" style="display:block;width:100%;text-align:left;margin-bottom:6px">${p.shiny ? "✨ " : ""}${label} · Nv.${p.level}</button>`;
+      })
+      .join("");
+    els.poketrainBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">Elige un Pokémon de tu equipo para entrenar sus EVs.</p>
+      <div class="integrations-list">${rows || `<p class="tagline">No tienes Pokémon en el equipo.</p>`}</div>
+    `;
+    els.poketrainBody.querySelectorAll("[data-poketrain-pick]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        renderPoketrainEditor(btn.getAttribute("data-poketrain-pick")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+  }
+
+  const EV_STAT_LABELS = { hp: "PS", attack: "Ataque", defense: "Defensa", spAttack: "At. Especial", spDefense: "Def. Especial", speed: "Velocidad" };
+
+  async function renderPoketrainEditor(instanceId) {
+    els.poketrainBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const data = await api(`/api/pokemon/team/${instanceId}/evs`).catch((err) => {
+      toast(err.message || "Error");
+      return null;
+    });
+    if (!data) {
+      renderPoketrainTeamPicker().catch((err) => toast(err.message || "Error"));
+      return;
+    }
+    let evs = { ...data.evs };
+    const renderBody = () => {
+      const total = Object.values(evs).reduce((sum, v) => sum + v, 0);
+      const overTotal = total > data.maxTotal;
+      const rows = Object.keys(EV_STAT_LABELS)
+        .map((key) => {
+          const val = evs[key] || 0;
+          const pct = Math.round((val / data.maxPerStat) * 100);
+          return `
+            <div style="margin-bottom:12px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <span>${EV_STAT_LABELS[key]}</span>
+                <span class="poke-num">${val}/${data.maxPerStat}</span>
+              </div>
+              <div class="poke-bar-track"><div class="poke-bar-fill xp" style="width:${pct}%"></div></div>
+              <div style="display:flex;gap:6px;justify-content:center;margin-top:4px">
+                <button type="button" class="dk-btn ghost" data-ev-step="${key}" data-ev-delta="-4">-4</button>
+                <button type="button" class="dk-btn ghost" data-ev-step="${key}" data-ev-delta="-1">-1</button>
+                <button type="button" class="dk-btn ghost" data-ev-step="${key}" data-ev-delta="1">+1</button>
+                <button type="button" class="dk-btn ghost" data-ev-step="${key}" data-ev-delta="4">+4</button>
+              </div>
+            </div>`;
+        })
+        .join("");
+      els.poketrainBody.innerHTML = `
+        <button type="button" class="dk-btn ghost" data-poketrain-cancel style="margin-bottom:12px">← Cambiar de Pokémon</button>
+        <p class="tagline poke-title" style="margin:0 0 4px">${escHtml(data.name)} · Nv.${data.level}</p>
+        <p class="tagline poke-num" style="margin:0 0 12px${overTotal ? ";color:var(--poke-red)" : ""}">${total}/${data.maxTotal} EVs totales</p>
+        ${rows}
+        <button type="button" class="dk-btn" data-poketrain-save style="margin-top:8px" ${overTotal ? "disabled" : ""}>Guardar</button>
+        <button type="button" class="dk-btn ghost" data-poketrain-reset style="margin-top:8px">Reiniciar a 0</button>
+      `;
+      els.poketrainBody.querySelector("[data-poketrain-cancel]")?.addEventListener("click", () => {
+        renderPoketrainTeamPicker().catch((err) => toast(err.message || "Error"));
+      });
+      els.poketrainBody.querySelectorAll("[data-ev-step]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const key = btn.getAttribute("data-ev-step");
+          const delta = Number(btn.getAttribute("data-ev-delta")) || 0;
+          evs[key] = Math.max(0, Math.min(data.maxPerStat, (evs[key] || 0) + delta));
+          renderBody();
+        });
+      });
+      els.poketrainBody.querySelector("[data-poketrain-reset]")?.addEventListener("click", () => {
+        evs = { hp: 0, attack: 0, defense: 0, spAttack: 0, spDefense: 0, speed: 0 };
+        renderBody();
+      });
+      els.poketrainBody.querySelector("[data-poketrain-save]")?.addEventListener("click", async () => {
+        const result = await api(`/api/pokemon/team/${instanceId}/evs`, { method: "POST", body: JSON.stringify({ evs }) }).catch((err) => {
+          toast(err.message || "Error");
+          return null;
+        });
+        if (!result) return;
+        toast(result.message || "Entrenamiento guardado");
+        renderPoketrainTeamPicker().catch((err) => toast(err.message || "Error"));
+      });
+    };
+    renderBody();
+  }
+
+  els.poketrainBack?.addEventListener("click", () => {
+    closePoketrainPanel();
+    setAppNav("servicios");
+  });
+  els.poketrainPanel?.addEventListener("click", (e) => {
+    if (e.target === els.poketrainPanel) {
+      closePoketrainPanel();
+      setAppNav("servicios");
+    }
+  });
+
+  // 7.8.17 (KAN-350) - amistad real: cada Pokémon del equipo muestra su
+  // amistad real (0-255) y su nivel (Baja/Media/Alta/Máxima), con un
+  // botón "Jugar" real (sube amistad, con cooldown real de 4h - el
+  // servidor rechaza con un mensaje claro si todavía no toca). Curar/
+  // alimentar/subir de nivel/ganar combates/debilitarse ya suben o bajan
+  // amistad de verdad desde otros flujos existentes (Mochila/combate) -
+  // este panel es solo para ver el estado real y para la acción nueva.
+  els.pokecarePanel = document.getElementById("pokecare-panel");
+  els.pokecareBody = document.getElementById("pokecare-body");
+  els.pokecareBack = document.getElementById("pokecare-back");
+
+  function closePokecarePanel() {
+    if (els.pokecarePanel) els.pokecarePanel.hidden = true;
+  }
+
+  function friendshipTierLabel(v) {
+    if (v >= 220) return "Máxima";
+    if (v >= 150) return "Alta";
+    if (v >= 70) return "Media";
+    return "Baja";
+  }
+
+  async function openPokecarePanel() {
+    if (!els.pokecarePanel || !els.pokecareBody) {
+      toast("Cuidar no disponible");
+      return;
+    }
+    closeSysHub();
+    hideAllPokeScreens();
+    els.pokecarePanel.hidden = false;
+    await renderPokecarePanel();
+  }
+
+  async function renderPokecarePanel() {
+    els.pokecareBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const [teamData, dexData] = await Promise.all([
+      api("/api/pokemon/team").catch(() => ({ team: [] })),
+      api("/api/pokemon/dex").catch(() => ({ entries: [] })),
+    ]);
+    const namesByDex = {};
+    for (const e of dexData.entries || []) namesByDex[e.dexNumber] = e;
+    const team = teamData.team || [];
+    const rows = team
+      .map((p) => {
+        const sp = namesByDex[p.dexNumber];
+        const speciesName = sp && sp.name !== "???" ? sp.name : `#${String(p.dexNumber).padStart(3, "0")}`;
+        // 7.8.51 (KAN-384) - apodo real: si está puesto, es el nombre
+        // principal (mismo criterio que el juego real), con la especie
+        // real entre paréntesis para no perder de vista quién es.
+        const nameHtml = p.nickname
+          ? `${escHtml(p.nickname)} <span class="poke-list-card-sub" style="display:inline">(${escHtml(speciesName)})</span>`
+          : escHtml(speciesName);
+        const label = `${spriteImg(sp && sp.sprites, p.shiny ? "frontShiny" : "front", sp ? sp.emoji : "❓", 20)} ${nameHtml}`;
+        const friendship = p.friendship || 0;
+        const pct = Math.max(0, Math.min(100, Math.round((friendship / 255) * 100)));
+        // 7.8.24 (KAN-357) - capa Tamagotchi real: Hambre/Energía/
+        // Felicidad reales (ya vienen calculadas en vivo desde el
+        // backend, mismo patrón que HP/PP) + Salud derivada + su
+        // comportamiento base real (dormilón/energético/...).
+        const healthColor = { Sano: "#51cf66", "Decaído": "#fab005", Enfermo: "#ff6b6b", "Debilitado": "#868e96" }[p.healthTier] || "#51cf66";
+        const statBar = (icon, label2, value, cls) => `
+          <div class="poke-list-card-sub" style="margin-top:6px">${icon} ${label2} ${value ?? "-"}/100</div>
+          <div class="poke-bar-track"><div class="poke-bar-fill ${cls}" style="width:${Math.max(0, Math.min(100, value ?? 0))}%"></div></div>`;
+        return `<div class="poke-combatant" style="align-items:flex-start;flex-wrap:wrap">
+          <div class="poke-combatant-avatar">${spriteImg(sp && sp.sprites, p.shiny ? "frontShiny" : "front", sp ? sp.emoji : "❓", 40)}</div>
+          <div class="poke-combatant-info">
+            <div style="font-weight:700">${label} · Nv.${p.level} <button type="button" class="dk-btn ghost" data-pokecare-rename="${escHtml(p.instanceId)}" style="padding:2px 8px;font-size:11px">✏️</button></div>
+            <div class="poke-list-card-sub"><span style="color:${healthColor}">${p.healthTier}</span>${p.behavior ? ` · ${p.behavior.emoji} ${escHtml(p.behavior.label)}` : ""}${p.activity ? ` · ${p.activity.emoji} ${escHtml(p.activity.label)}` : ""}</div>
+            ${statBar("🍗", "Hambre", p.hunger, "hunger")}
+            ${statBar("⚡", "Energía", p.energy, "energy")}
+            ${statBar("😊", "Felicidad", p.happiness, "happiness")}
+            <div class="poke-list-card-sub" style="margin-top:6px">💗 Amistad ${friendship}/255 · ${friendshipTierLabel(friendship)}</div>
+            <div class="poke-bar-track"><div class="poke-bar-fill friend" style="width:${pct}%"></div></div>
+            <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+              <button type="button" class="dk-btn ghost" data-pokecare-play="${escHtml(p.instanceId)}">🎾 Jugar</button>
+              <button type="button" class="dk-btn ghost" data-pokecare-rest="${escHtml(p.instanceId)}">💤 Descansar</button>
+              <button type="button" class="dk-btn ghost" data-pokecare-to-box="${escHtml(p.instanceId)}">📦 A caja</button>
+            </div>
+          </div>
+        </div>`;
+      })
+      .join("");
+    // 7.8.50 (KAN-383) - Centro Pokémon real: curación gratuita de todo
+    // el equipo, accesible desde el mismo panel donde ya se cuida al
+    // equipo (contextualmente es el mismo sitio).
+    els.pokecareBody.innerHTML = `
+      <div style="display:flex;justify-content:center;margin-bottom:14px">
+        <button type="button" class="dk-btn" data-pokecare-heal-center>🏥 Centro Pokémon (curar equipo gratis)</button>
+      </div>
+      <div>${rows || `<p class="tagline">No tienes Pokémon en el equipo.</p>`}</div>
+    `;
+    els.pokecareBody.querySelector("[data-pokecare-heal-center]")?.addEventListener("click", () => {
+      doPokecareHealCenter().catch((err) => toast(err.message || "Error"));
+    });
+    els.pokecareBody.querySelectorAll("[data-pokecare-play]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        doPokecarePlay(btn.getAttribute("data-pokecare-play")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+    els.pokecareBody.querySelectorAll("[data-pokecare-rest]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        doPokecareRest(btn.getAttribute("data-pokecare-rest")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+    // 7.8.46 (KAN-379) - viaje real de vuelta a caja, cierra el bucle
+    // real con el nuevo panel de Cajas (equipo -> caja -> equipo).
+    els.pokecareBody.querySelectorAll("[data-pokecare-to-box]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        doPokecareToBox(btn.getAttribute("data-pokecare-to-box")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+    // 7.8.51 (KAN-384) - apodo real, editable con un prompt simple.
+    els.pokecareBody.querySelectorAll("[data-pokecare-rename]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        doPokecareRename(btn.getAttribute("data-pokecare-rename")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+  }
+
+  async function doPokecareHealCenter() {
+    const result = await api("/api/pokemon/center/heal", { method: "POST" }).catch((err) => {
+      toast(err.message || "Error");
+      return null;
+    });
+    if (!result) return;
+    toast(result.message);
+    renderPokecarePanel().catch((err) => toast(err.message || "Error"));
+  }
+
+  async function doPokecareRename(instanceId) {
+    const nickname = window.prompt(`Nuevo apodo (máx 12 caracteres, vacío para quitarlo):`, "");
+    if (nickname === null) return; // cancelado
+    const result = await api(`/api/pokemon/team/${instanceId}/nickname`, { method: "POST", body: JSON.stringify({ nickname }) }).catch((err) => {
+      toast(err.message || "Error");
+      return null;
+    });
+    if (!result) return;
+    toast(result.message);
+    renderPokecarePanel().catch((err) => toast(err.message || "Error"));
+  }
+
+  async function doPokecareToBox(instanceId) {
+    const result = await api(`/api/pokemon/team/${instanceId}`, { method: "DELETE" }).catch((err) => {
+      toast(err.message || "Error");
+      return null;
+    });
+    if (result) {
+      toast("Movido a una caja real.");
+      await renderPokecarePanel();
+    }
+  }
+
+  async function doPokecarePlay(instanceId) {
+    const result = await api(`/api/pokemon/team/${instanceId}/play`, { method: "POST" });
+    toast(result.message);
+    await renderPokecarePanel();
+  }
+
+  // 7.8.24 (KAN-357) - descansar real: sube energía real (nunca se
+  // regenera sola con el tiempo), con su propio cooldown real de 6h.
+  async function doPokecareRest(instanceId) {
+    const result = await api(`/api/pokemon/team/${instanceId}/rest`, { method: "POST" });
+    toast(result.message);
+    await renderPokecarePanel();
+  }
+
+  els.pokecareBack?.addEventListener("click", () => {
+    closePokecarePanel();
+    setAppNav("servicios");
+  });
+  els.pokecarePanel?.addEventListener("click", (e) => {
+    if (e.target === els.pokecarePanel) {
+      closePokecarePanel();
+      setAppNav("servicios");
+    }
+  });
+
+  // 7.8.40 (KAN-373) - medallero real: las 8 medallas reales de Kanto
+  // (una por gimnasio), conseguida/pendiente según el estado real del
+  // entrenador, con un botón "Desafiar" real que abre el mismo selector
+  // de equipo + motor de combate ya usados para encuentros salvajes y
+  // entrenadores itinerantes (el combate se muestra en el panel de
+  // Explorar; al terminar/huir se vuelve aquí).
+  els.pokemedalsPanel = document.getElementById("pokemedals-panel");
+  els.pokemedalsBody = document.getElementById("pokemedals-body");
+  els.pokemedalsBack = document.getElementById("pokemedals-back");
+
+  function closePokemedalsPanel() {
+    if (els.pokemedalsPanel) els.pokemedalsPanel.hidden = true;
+  }
+
+  async function openPokemedalsPanel() {
+    if (!els.pokemedalsPanel || !els.pokemedalsBody) {
+      toast("Medallero no disponible");
+      return;
+    }
+    closeSysHub();
+    hideAllPokeScreens();
+    els.pokemedalsPanel.hidden = false;
+    await renderMedalleroPanel();
+  }
+
+  async function renderMedalleroPanel() {
+    els.pokemedalsBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const [gymsData, zonesData] = await Promise.all([
+      api("/api/pokemon/gyms").catch(() => ({ gyms: [] })),
+      api("/api/pokemon/zones").catch(() => ({ zones: [] })),
+    ]);
+    const zonesById = {};
+    for (const z of zonesData.zones || []) zonesById[z.id] = z;
+    const gyms = (gymsData.gyms || []).slice().sort((a, b) => a.order - b.order);
+    const earnedCount = gyms.filter((g) => g.earned).length;
+    const rows = gyms
+      .map((g) => {
+        const zone = zonesById[g.zoneId];
+        const zoneLabel = zone ? `${zone.emoji} ${escHtml(zone.name)}` : escHtml(g.zoneId);
+        return `<div class="integration-row integration-row--stub" style="flex-wrap:wrap;gap:8px">
+          <span class="integration-ico">${g.earned ? g.badgeEmoji : "❔"}</span>
+          <span class="integration-info">
+            <span class="integration-name">${escHtml(g.leaderName)} · Tipo ${escHtml(g.type)}</span>
+            <span class="integration-detail">${zoneLabel} · Equipo de ${g.teamSize} · ${escHtml(g.badgeName)}</span>
+            <span class="integration-detail" style="color:${g.earned ? "#51cf66" : "#868e96"}">${g.earned ? "🏅 Medalla conseguida" : "Medalla pendiente"}</span>
+          </span>
+          ${g.earned ? "" : `<button type="button" class="dk-btn ghost" data-medal-challenge="${escHtml(g.id)}">🥊 Desafiar</button>`}
+        </div>`;
+      })
+      .join("");
+    els.pokemedalsBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">${earnedCount}/${gyms.length} medallas conseguidas</p>
+      <div class="integrations-list">${rows || `<p class="tagline">No hay gimnasios disponibles.</p>`}</div>
+    `;
+    els.pokemedalsBody.querySelectorAll("[data-medal-challenge]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const gymId = btn.getAttribute("data-medal-challenge");
+        if (els.pokemedalsPanel) els.pokemedalsPanel.hidden = true;
+        if (els.pokemonExplorePanel) els.pokemonExplorePanel.hidden = false;
+        battleReturnTarget = returnToMedalleroFromBattle;
+        renderBattleTeamPicker({ kind: "gym", opponentId: gymId }, returnToMedalleroFromBattle).catch((err) => toast(err.message || "Error"));
+      });
+    });
+  }
+
+  async function returnToMedalleroFromBattle() {
+    if (els.pokemonExplorePanel) els.pokemonExplorePanel.hidden = true;
+    if (els.pokemedalsPanel) els.pokemedalsPanel.hidden = false;
+    await renderMedalleroPanel();
+  }
+
+  els.pokemedalsBack?.addEventListener("click", () => {
+    closePokemedalsPanel();
+    setAppNav("servicios");
+  });
+  els.pokemedalsPanel?.addEventListener("click", (e) => {
+    if (e.target === els.pokemedalsPanel) {
+      closePokemedalsPanel();
+      setAppNav("servicios");
+    }
+  });
+
+  // 7.8.29 (KAN-362) - Logros reales: calculados en vivo por el backend
+  // (nunca un flag guardado que se pueda desincronizar), mismo patrón
+  // visual que el Medallero.
+  els.pokeachievementsPanel = document.getElementById("pokeachievements-panel");
+  els.pokeachievementsBody = document.getElementById("pokeachievements-body");
+  els.pokeachievementsBack = document.getElementById("pokeachievements-back");
+
+  function closePokeachievementsPanel() {
+    if (els.pokeachievementsPanel) els.pokeachievementsPanel.hidden = true;
+  }
+
+  async function openPokeachievementsPanel() {
+    if (!els.pokeachievementsPanel || !els.pokeachievementsBody) {
+      toast("Logros no disponible");
+      return;
+    }
+    closeSysHub();
+    hideAllPokeScreens();
+    els.pokeachievementsPanel.hidden = false;
+    await renderPokeachievementsPanel();
+  }
+
+  async function renderPokeachievementsPanel() {
+    els.pokeachievementsBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const data = await api("/api/pokemon/achievements").catch(() => ({ achievements: [], unlockedCount: 0, total: 0 }));
+    const rows = (data.achievements || [])
+      .map((a) => {
+        // 7.8.56 (KAN-389) - recompensa real: botón "Reclamar" solo si
+        // está desbloqueado de verdad Y todavía no se ha cobrado.
+        const statusHtml = a.claimed ? " · ✅ Conseguido y reclamado" : a.unlocked ? ` · ✅ Conseguido (+${a.reward} Poké$ sin reclamar)` : "";
+        const claimBtn = a.claimable ? `<button type="button" class="dk-btn" data-achievement-claim="${escHtml(a.id)}">🎁 Reclamar +${a.reward}</button>` : "";
+        return `<div class="poke-list-card${a.unlocked ? "" : " locked"}" style="flex-wrap:wrap">
+          <div class="poke-list-card-avatar">${a.unlocked ? a.emoji : "🔒"}</div>
+          <div class="poke-list-card-body">
+            <div class="poke-list-card-title">${escHtml(a.name)}</div>
+            <div class="poke-list-card-sub">${escHtml(a.description)}${statusHtml}</div>
+          </div>
+          ${claimBtn}
+        </div>`;
+      })
+      .join("");
+    els.pokeachievementsBody.innerHTML = `
+      <p class="tagline poke-num" style="margin:0 0 10px">${data.unlockedCount}/${data.total} logros conseguidos</p>
+      <div>${rows || `<p class="tagline">No hay logros disponibles.</p>`}</div>
+    `;
+    els.pokeachievementsBody.querySelectorAll("[data-achievement-claim]").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const id = btn.getAttribute("data-achievement-claim");
+        const result = await api(`/api/pokemon/achievements/${id}/claim`, { method: "POST" }).catch((err) => {
+          toast(err.message || "Error");
+          return null;
+        });
+        if (!result) return;
+        toast(result.message);
+        renderPokeachievementsPanel().catch((err) => toast(err.message || "Error"));
+      });
+    });
+  }
+
+  els.pokeachievementsBack?.addEventListener("click", () => {
+    closePokeachievementsPanel();
+    setAppNav("servicios");
+  });
+  els.pokeachievementsPanel?.addEventListener("click", (e) => {
+    if (e.target === els.pokeachievementsPanel) {
+      closePokeachievementsPanel();
+      setAppNav("servicios");
+    }
+  });
+
+  // 7.8.54 (KAN-387) - Guardería real: 2 Pokémon propios (equipo o
+  // caja) se dejan en pareja, caminar de verdad acumula pasos reales
+  // (los 3 niveles de exploración ya pasan por el mismo moveOnMap()
+  // real) hacia un huevo real. Simplificación honesta: sin géneros ni
+  // grupos huevo reales (no existen en los datos de especies de hoy).
+  els.pokedaycarePanel = document.getElementById("pokedaycare-panel");
+  els.pokedaycareBody = document.getElementById("pokedaycare-body");
+  els.pokedaycareBack = document.getElementById("pokedaycare-back");
+
+  function closePokedaycarePanel() {
+    if (els.pokedaycarePanel) els.pokedaycarePanel.hidden = true;
+  }
+
+  async function openPokedaycarePanel() {
+    if (!els.pokedaycarePanel || !els.pokedaycareBody) {
+      toast("Guardería no disponible");
+      return;
+    }
+    closeSysHub();
+    hideAllPokeScreens();
+    els.pokedaycarePanel.hidden = false;
+    await renderPokedaycarePanel();
+  }
+
+  async function renderPokedaycarePanel() {
+    els.pokedaycareBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const status = await api("/api/pokemon/daycare/status").catch(() => ({ active: false }));
+
+    if (status.active) {
+      const pct = Math.max(0, Math.min(100, Math.round((status.stepsAccumulated / status.targetSteps) * 100)));
+      els.pokedaycareBody.innerHTML = `
+        <p class="tagline" style="margin:0 0 10px">🐣 Guardería</p>
+        <div class="poke-result-card">
+          <div class="poke-result-ico">🐣</div>
+          <p class="tagline poke-title">${status.parentA ? escHtml(status.parentA.emoji + " " + status.parentA.name) : "?"} + ${status.parentB ? escHtml(status.parentB.emoji + " " + status.parentB.name) : "?"}</p>
+          <p class="poke-num">${status.stepsAccumulated}/${status.targetSteps} pasos reales${status.ready ? " · ¡listo!" : ""}</p>
+          <div class="poke-bar-track"><div class="poke-bar-fill xp" style="width:${pct}%"></div></div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+          <button type="button" class="dk-btn" data-daycare-collect${status.ready ? "" : " disabled"}>🥚 Recoger huevo</button>
+          <button type="button" class="dk-btn ghost" data-daycare-withdraw>❌ Sacar sin huevo</button>
+        </div>
+      `;
+      els.pokedaycareBody.querySelector("[data-daycare-collect]")?.addEventListener("click", async () => {
+        const result = await api("/api/pokemon/daycare/collect", { method: "POST" }).catch((err) => {
+          toast(err.message || "Error");
+          return null;
+        });
+        if (!result) return;
+        toast(result.message);
+        renderPokedaycarePanel().catch((err) => toast(err.message || "Error"));
+      });
+      els.pokedaycareBody.querySelector("[data-daycare-withdraw]")?.addEventListener("click", async () => {
+        const result = await api("/api/pokemon/daycare/withdraw", { method: "POST" }).catch((err) => {
+          toast(err.message || "Error");
+          return null;
+        });
+        if (!result) return;
+        toast(result.message);
+        renderPokedaycarePanel().catch((err) => toast(err.message || "Error"));
+      });
+      return;
+    }
+
+    const [teamData, storageData, dexData] = await Promise.all([
+      api("/api/pokemon/team").catch(() => ({ team: [] })),
+      api("/api/pokemon/storage").catch(() => ({ boxes: {} })),
+      api("/api/pokemon/dex").catch(() => ({ entries: [] })),
+    ]);
+    const namesByDex = {};
+    for (const e of dexData.entries || []) namesByDex[e.dexNumber] = e;
+    const boxed = Object.values(storageData.boxes || {}).flat();
+    const all = [...(teamData.team || []), ...boxed];
+    let selected = [];
+    const renderPicker = () => {
+      const rows = all
+        .map((p) => {
+          const sp = namesByDex[p.dexNumber];
+          const label = sp && sp.name !== "???" ? `${spriteImg(sp.sprites, p.shiny ? "frontShiny" : "front", sp.emoji, 20)} ${escHtml(sp.name)}` : `#${String(p.dexNumber).padStart(3, "0")}`;
+          const isSelected = selected.includes(p.instanceId);
+          return `<button type="button" class="dk-btn${isSelected ? "" : " ghost"}" data-daycare-pick="${escHtml(p.instanceId)}" style="display:block;width:100%;text-align:left;margin-bottom:6px">${isSelected ? "✅ " : ""}${p.shiny ? "✨ " : ""}${label} · Nv.${p.level}</button>`;
+        })
+        .join("");
+      els.pokedaycareBody.innerHTML = `
+        <p class="tagline" style="margin:0 0 10px">🐣 Guardería</p>
+        <p class="tagline">Deja una pareja real (equipo o caja, cualquier combinación) y camina de verdad para que aparezca un huevo. Elige 2:</p>
+        <div class="integrations-list">${rows || `<p class="tagline">No tienes Pokémon.</p>`}</div>
+        <div style="display:flex;justify-content:center;margin-top:10px">
+          <button type="button" class="dk-btn" data-daycare-confirm${selected.length === 2 ? "" : " disabled"}>Dejar pareja en la Guardería</button>
+        </div>
+      `;
+      els.pokedaycareBody.querySelectorAll("[data-daycare-pick]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-daycare-pick");
+          if (selected.includes(id)) {
+            selected = selected.filter((x) => x !== id);
+          } else if (selected.length < 2) {
+            selected.push(id);
+          } else {
+            toast("Ya has elegido 2 - quita uno primero");
+            return;
+          }
+          renderPicker();
+        });
+      });
+      els.pokedaycareBody.querySelector("[data-daycare-confirm]")?.addEventListener("click", async () => {
+        const result = await api("/api/pokemon/daycare/deposit", { method: "POST", body: JSON.stringify({ instanceIdA: selected[0], instanceIdB: selected[1] }) }).catch((err) => {
+          toast(err.message || "Error");
+          return null;
+        });
+        if (!result) return;
+        toast(result.message);
+        renderPokedaycarePanel().catch((err) => toast(err.message || "Error"));
+      });
+    };
+    renderPicker();
+  }
+
+  els.pokedaycareBack?.addEventListener("click", () => {
+    closePokedaycarePanel();
+    setAppNav("servicios");
+  });
+  els.pokedaycarePanel?.addEventListener("click", (e) => {
+    if (e.target === els.pokedaycarePanel) {
+      closePokedaycarePanel();
+      setAppNav("servicios");
+    }
+  });
+
+  // 7.8.41 (KAN-374) - rediseño visual unificado: dashboard "Inicio"
+  // real (nivel/XP/equipo/progreso) + barra de navegación inferior
+  // compartida entre Inicio/Explorar/Pokémon/Mochila/Pokédex - los 5
+  // paneles ya existentes se mantienen intactos (misma lógica, mismo
+  // estado), la barra solo permite saltar entre ellos sin volver cada
+  // vez al hub Sistema, para que se sienta como una sola app.
+  els.pokemonHomePanel = document.getElementById("pokemon-home-panel");
+  els.pokemonHomeBody = document.getElementById("pokemon-home-body");
+  els.pokemonHomeBack = document.getElementById("pokemon-home-back");
+
+  function closePokemonHomePanel() {
+    if (els.pokemonHomePanel) els.pokemonHomePanel.hidden = true;
+  }
+
+  async function openPokemonHomePanel() {
+    if (!els.pokemonHomePanel || !els.pokemonHomeBody) {
+      toast("Pokémon no disponible");
+      return;
+    }
+    closeSysHub();
+    hideAllPokeScreens();
+    els.pokemonHomePanel.hidden = false;
+    await renderPokemonHome();
+  }
+
+  // 7.8.61 - fecha/hora real de un evento -> "hace N min/h/d", mismo
+  // espíritu que formatConnectedAgo pero con el texto corto que pide
+  // una fila de notificación (sin el prefijo "conectado").
+  function pokeTimeAgo(iso) {
+    if (!iso) return "";
+    const ms = Date.now() - new Date(iso).getTime();
+    if (!Number.isFinite(ms) || ms < 0) return "";
+    const s = Math.round(ms / 1000);
+    if (s < 60) return "ahora mismo";
+    const m = Math.round(s / 60);
+    if (m < 60) return `hace ${m} min`;
+    const h = Math.round(m / 60);
+    if (h < 48) return `hace ${h} h`;
+    return `hace ${Math.round(h / 24)} d`;
+  }
+
+  async function renderPokemonHome() {
+    els.pokemonHomeBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const [progression, teamData, dexData, goal, achievementsData, quickStatus, eventsData] = await Promise.all([
+      api("/api/pokemon/progression").catch(() => null),
+      api("/api/pokemon/team").catch(() => ({ team: [] })),
+      api("/api/pokemon/dex").catch(() => ({ entries: [] })),
+      api("/api/pokemon/dex/goal").catch(() => null),
+      api("/api/pokemon/achievements").catch(() => ({ achievements: [] })),
+      api("/api/pokemon/explore/quick/status").catch(() => ({ status: "none" })),
+      api("/api/events?limit=50").catch(() => ({ recent: [] })),
+    ]);
+    const namesByDex = {};
+    for (const e of dexData.entries || []) namesByDex[e.dexNumber] = e;
+    const team = teamData.team || [];
+    const xpPct = progression ? Math.max(0, Math.min(100, Math.round((progression.xpIntoLevel / progression.xpForNextLevel) * 100))) : 0;
+    const trainerName = escHtml((progression && progression.trainerName) || "Entrenador BMO");
+
+    const teamSlotsHtml = Array.from({ length: 6 })
+      .map((_, i) => {
+        const p = team[i];
+        if (!p) return `<div class="poke-team-slot empty"><div style="font-size:22px">➕</div><div class="lvl poke-num">Vacío</div></div>`;
+        const sp = namesByDex[p.dexNumber];
+        const spriteHtml = spriteImg(sp && sp.sprites, p.shiny ? "frontShiny" : "front", sp ? sp.emoji : "❓", 64);
+        return `<div class="poke-team-slot">${spriteHtml}<div class="lvl poke-num">Nv.${p.level}</div></div>`;
+      })
+      .join("");
+
+    // 7.8.61 - objetivo real de Pokédex (7.8.37) + logros reales
+    // (7.8.29/7.8.56) como barras laterales reales, en vez del grid
+    // suelto de antes - mismo dato, presentación más cercana al
+    // mockup del usuario.
+    const achievements = achievementsData.achievements || [];
+    const achievedCount = achievements.filter((a) => a.unlocked).length;
+    const dexGoalPct = goal ? goal.percent : 0;
+    const achPct = achievements.length ? Math.round((achievedCount / achievements.length) * 100) : 0;
+
+    // 7.8.61 - "consejo del día" real: derivado del estado real del
+    // equipo/logros, nunca texto de relleno fijo. Prioridad: salud del
+    // equipo > logro reclamable > hueco libre en el equipo > genérico.
+    const sickMember = team.find((p) => p.healthTier === "Enfermo");
+    const tiredMember = team.find((p) => p.healthTier === "Decaído" || p.healthTier === "Cansado");
+    const claimable = achievements.find((a) => a.unlocked && !a.claimed);
+    let bmoTip;
+    if (sickMember) {
+      const sp = namesByDex[sickMember.dexNumber];
+      bmoTip = `${escHtml(sickMember.nickname || (sp && sp.name) || "Uno de tu equipo")} está enfermo/a - pásate por 🏥 Centro Pokémon o ❤️ Cuidar.`;
+    } else if (tiredMember) {
+      bmoTip = `Tu equipo tiene la energía baja - un 💤 Descanso en Cuidar les vendría bien.`;
+    } else if (claimable) {
+      bmoTip = `Tienes un logro real desbloqueado esperando en 🏆 Logros - ¡ve a reclamarlo!`;
+    } else if (team.length < 6) {
+      bmoTip = `Te quedan ${6 - team.length} hueco${6 - team.length === 1 ? "" : "s"} libres en el equipo - buen momento para explorar.`;
+    } else {
+      bmoTip = `Tu equipo está sano y completo. ¡Buen día para explorar!`;
+    }
+
+    // 7.8.61 - tarjeta de exploración activa: solo aparece si hay de
+    // verdad una sesión 🟢 Rápido corriendo (7.8.48/7.8.59) - sin
+    // arte de zona inventado, solo datos reales.
+    let explorationHtml = "";
+    if (quickStatus.status === "running") {
+      const donePct = quickStatus.durationMinutes
+        ? Math.max(0, Math.min(100, Math.round(((quickStatus.durationMinutes - quickStatus.remainingMinutes) / quickStatus.durationMinutes) * 100)))
+        : 0;
+      explorationHtml = `
+        <p class="tagline" style="margin:14px 0 8px">Exploración activa</p>
+        <button type="button" class="poke-explore-active" data-poke-quick="explore">
+          <div class="poke-explore-active-head">
+            <span class="poke-title">🟢 Explorando ${escHtml(quickStatus.zoneId)}…</span>
+          </div>
+          <p class="poke-num" style="margin:4px 0">${quickStatus.remainingMinutes} min restantes de ${quickStatus.durationMinutes}</p>
+          <div class="poke-bar-track"><div class="poke-bar-fill xp" style="width:${donePct}%"></div></div>
+        </button>`;
+    }
+
+    // 7.8.61 - notificaciones reales del Event Center filtradas a
+    // eventos "pokemon.*" (hoy solo emite pokemon.fainted del 7.8.52 -
+    // el resto de hitos todavía no emiten evento real, así que la
+    // lista puede salir vacía de verdad; estado honesto, no relleno).
+    const pokeEvents = (eventsData.recent || []).filter((e) => String(e.type || "").startsWith("pokemon."));
+    const notifHtml = pokeEvents.length
+      ? pokeEvents
+          .slice(0, 5)
+          .map(
+            (e) => `
+        <div class="poke-notif-row">
+          <div class="poke-notif-title">${escHtml(e.title || e.type)}</div>
+          <div class="poke-notif-sub">${escHtml(e.message || "")}</div>
+          <div class="poke-notif-time poke-num">${pokeTimeAgo(e.time)}</div>
+        </div>`
+          )
+          .join("")
+      : `<p class="tagline">Sin notificaciones recientes de Pokémon.</p>`;
+
+    els.pokemonHomeBody.innerHTML = `
+      <div class="poke-hero poke-hero-withside">
+        <img class="poke-hero-avatar poke-hero-avatar-img" src="./assets/bmo.webp" alt="" />
+        <div class="poke-hero-info">
+          <div class="poke-hero-name poke-title">${trainerName}${progression ? " · Nv." + progression.trainerLevel : ""} <button type="button" class="dk-btn ghost" data-poke-rename-trainer style="padding:2px 8px;font-size:11px">✏️</button></div>
+          <div class="poke-hero-rank poke-num">${progression ? `${progression.xpIntoLevel}/${progression.xpForNextLevel} XP` : "Cargando progreso…"}</div>
+          <div class="poke-bar-track"><div class="poke-bar-fill xp" style="width:${xpPct}%"></div></div>
+          <div class="poke-hero-money poke-num">💰 ${progression ? progression.money : "…"} Poké$</div>
+        </div>
+        <div class="poke-progress-side">
+          <div class="poke-progress-row"><span>📖 Pokédex</span><span class="poke-num">${goal ? `${goal.implemented}/${goal.totalReal}` : "…"}</span></div>
+          <div class="poke-bar-track sm"><div class="poke-bar-fill xp" style="width:${dexGoalPct}%"></div></div>
+          <div class="poke-progress-row"><span>🏆 Logros</span><span class="poke-num">${achievedCount}/${achievements.length}</span></div>
+          <div class="poke-bar-track sm"><div class="poke-bar-fill gold" style="width:${achPct}%"></div></div>
+        </div>
+      </div>
+
+      <p class="tagline" style="margin:0 0 8px">Tu equipo</p>
+      <div class="poke-team-strip">${teamSlotsHtml}</div>
+
+      <div class="poke-tip-card">
+        <img class="poke-tip-avatar" src="./assets/bmo.webp" alt="" />
+        <div class="poke-tip-body">
+          <div class="poke-title" style="font-size:0.95rem">¡Hola ${trainerName}!</div>
+          <p class="poke-tip-text">${bmoTip}</p>
+        </div>
+      </div>
+
+      ${explorationHtml}
+
+      <p class="tagline" style="margin:14px 0 8px">Accesos rápidos</p>
+      <div class="poke-quick-grid">
+        <button type="button" class="poke-quick-btn" data-poke-quick="explore"><span class="poke-quick-ico poke-ico-green"><img src="./assets/icon_tree.svg" alt="" /></span><span>Explorar</span></button>
+        <button type="button" class="poke-quick-btn" data-poke-quick="dex"><span class="poke-quick-ico poke-ico-red"><img src="./assets/icon_book.svg" alt="" /></span><span>Pokédex</span></button>
+        <button type="button" class="poke-quick-btn" data-poke-quick="bag"><span class="poke-quick-ico poke-ico-brown"><img src="./assets/icon_bag.svg" alt="" /></span><span>Mochila</span></button>
+        <button type="button" class="poke-quick-btn" data-poke-quick="box"><span class="poke-quick-ico poke-ico-blue"><img src="./assets/icon_monitor.svg" alt="" /></span><span>Cajas</span></button>
+        <button type="button" class="poke-quick-btn" data-poke-quick="events"><span class="poke-quick-ico poke-ico-gold"><img src="./assets/icon_calendar.svg" alt="" /></span><span>Eventos</span></button>
+        <button type="button" class="poke-quick-btn" data-poke-quick="train"><span class="poke-quick-ico poke-ico-purple"><img src="./assets/icon_dumbbell.svg" alt="" /></span><span>Entrenar</span></button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
+        <button type="button" class="dk-btn ghost" data-poke-quick="moves">🥋 Movimientos</button>
+        <button type="button" class="dk-btn ghost" data-poke-quick="heal">🏥 Centro Pokémon</button>
+        <button type="button" class="dk-btn ghost" data-poke-quick="achievements">🏆 Logros</button>
+        <button type="button" class="dk-btn ghost" data-poke-quick="shiny">✨ Shiny</button>
+        <button type="button" class="dk-btn ghost" data-poke-quick="daycare">🐣 Guardería</button>
+        <button type="button" class="dk-btn ghost" data-poke-quick="medals">🎖️ Medallero</button>
+        <button type="button" class="dk-btn ghost" data-poke-quick="progress">📊 Progresión</button>
+      </div>
+
+      <p class="tagline" style="margin:14px 0 8px">Notificaciones</p>
+      <div class="poke-notif-list">${notifHtml}</div>
+    `;
+    els.pokemonHomeBody.querySelectorAll("[data-poke-quick]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const target = btn.getAttribute("data-poke-quick");
+        if (target === "explore") switchPokeTab("explore");
+        else if (target === "dex") switchPokeTab("dex");
+        else if (target === "bag") switchPokeTab("bag");
+        else if (target === "medals") openPokemedalsPanel().catch((err) => toast(err.message || "Error"));
+        else if (target === "progress") openPokeprogressPanel().catch((err) => toast(err.message || "Error"));
+        else if (target === "events") openPokeeventsPanel().catch((err) => toast(err.message || "Error"));
+        else if (target === "box") openPokeboxPanel().catch((err) => toast(err.message || "Error"));
+        else if (target === "train") openPoketrainPanel().catch((err) => toast(err.message || "Error"));
+        else if (target === "moves") openPokemovesPanel().catch((err) => toast(err.message || "Error"));
+        else if (target === "heal") {
+          api("/api/pokemon/center/heal", { method: "POST" })
+            .then((result) => toast(result.message))
+            .catch((err) => toast(err.message || "Error"));
+        } else if (target === "achievements") {
+          openPokeachievementsPanel().catch((err) => toast(err.message || "Error"));
+        } else if (target === "shiny") {
+          doPokeShinySettings().catch((err) => toast(err.message || "Error"));
+        } else if (target === "daycare") {
+          openPokedaycarePanel().catch((err) => toast(err.message || "Error"));
+        }
+      });
+    });
+    // 7.8.55 (KAN-388) - nombre real de entrenador, editable con un
+    // prompt simple - mismo patrón que los apodos de Pokémon.
+    els.pokemonHomeBody.querySelector("[data-poke-rename-trainer]")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      doPokeRenameTrainer().catch((err) => toast(err.message || "Error"));
+    });
+  }
+
+  async function doPokeRenameTrainer() {
+    const current = await api("/api/pokemon/trainer/name").catch(() => ({ trainerName: "Entrenador BMO" }));
+    const input = window.prompt("Nuevo nombre de entrenador (máx 16 caracteres, vacío para volver a \"Entrenador BMO\"):", current.trainerName);
+    if (input === null) return; // cancelado
+    const result = await api("/api/pokemon/trainer/name", { method: "POST", body: JSON.stringify({ name: input }) }).catch((err) => {
+      toast(err.message || "Error");
+      return null;
+    });
+    if (!result) return;
+    toast(result.message);
+    renderPokemonHome().catch((err) => toast(err.message || "Error"));
+  }
+
+  // 7.8.31 (KAN-364) - probabilidad real configurable de shiny: mismo
+  // patrón simple de prompt ya usado para apodos (sin construir una
+  // pantalla dedicada para un único número real).
+  async function doPokeShinySettings() {
+    const current = await api("/api/pokemon/settings/shiny").catch((err) => {
+      toast(err.message || "Error");
+      return null;
+    });
+    if (!current) return;
+    const input = window.prompt(
+      `Probabilidad real de Shiny actual: ${current.chancePercent}% (por defecto real: ${current.defaultChancePercent}%).\nEscribe un nuevo porcentaje (0-100):`,
+      String(current.chancePercent)
+    );
+    if (input === null) return; // cancelado
+    const percent = Number(input);
+    if (!Number.isFinite(percent)) {
+      toast("Introduce un número real válido");
+      return;
+    }
+    const result = await api("/api/pokemon/settings/shiny", { method: "POST", body: JSON.stringify({ chance: percent / 100 }) }).catch((err) => {
+      toast(err.message || "Error");
+      return null;
+    });
+    if (!result) return;
+    toast(`Probabilidad de Shiny real ahora: ${result.chancePercent}%`);
+  }
+
+  // Router real de la barra inferior: oculta el panel Pokémon
+  // actualmente visible y abre el destino real (misma función de
+  // apertura ya usada por cada tile del hub Sistema, sin duplicar
+  // lógica) - la barra es solo navegación, nunca reimplementa nada.
+  // 7.8.46 (KAN-379) - hueco real encontrado en la propia verificación:
+  // la barra inferior solo ocultaba los 5 paneles principales - un
+  // panel secundario abierto desde Inicio (Medallero/Progresión/
+  // Eventos/Cajas) se quedaba apilado encima al cambiar de pestaña,
+  // rompiendo la sensación de "una sola app" que pedía el usuario.
+  // Ahora la barra cierra CUALQUIER panel real de Pokémon, principal o
+  // secundario, antes de abrir el destino nuevo.
+  function hideAllPokeScreens() {
+    [
+      els.pokemonHomePanel, els.pokedexPanel, els.pokemonExplorePanel, els.pokebagPanel, els.pokecarePanel,
+      els.pokemedalsPanel, els.pokeprogressPanel, els.pokeeventsPanel, els.pokeboxPanel, els.pokemovesPanel, els.poketrainPanel, els.pokeachievementsPanel, els.pokedaycarePanel,
+    ].forEach((panel) => {
+      if (panel) panel.hidden = true;
+    });
+  }
+
+  function switchPokeTab(tab) {
+    hideAllPokeScreens();
+    if (tab === "home") openPokemonHomePanel().catch((err) => toast(err.message || "Error"));
+    else if (tab === "explore") openPokemonExplorePanel().catch((err) => toast(err.message || "Error"));
+    else if (tab === "team") openPokecarePanel().catch((err) => toast(err.message || "Error"));
+    else if (tab === "bag") openPokebagPanel().catch((err) => toast(err.message || "Error"));
+    else if (tab === "dex") openPokedexPanel().catch((err) => toast(err.message || "Error"));
+  }
+
+  // Un único listener delegado cubre las 5 copias de la barra (una por
+  // pantalla) - no hace falta enganchar 25 botones a mano.
+  document.body.addEventListener("click", (e) => {
+    const tabBtn = e.target.closest("[data-poke-tab]");
+    if (tabBtn) switchPokeTab(tabBtn.getAttribute("data-poke-tab"));
+  });
+
+  els.pokemonHomeBack?.addEventListener("click", () => {
+    closePokemonHomePanel();
+    setAppNav("servicios");
+  });
+  els.pokemonHomePanel?.addEventListener("click", (e) => {
+    if (e.target === els.pokemonHomePanel) {
+      closePokemonHomePanel();
+      setAppNav("servicios");
+    }
+  });
+
+  // 7.8.28 (KAN-361) - progresión real: todo calculado en vivo por el
+  // backend (GET /api/pokemon/progression) a partir de estado ya real
+  // y existente (Pokédex/zonas/equipo/insignias/combates) - este panel
+  // solo muestra los números reales, no inventa ni duplica nada.
+  els.pokeprogressPanel = document.getElementById("pokeprogress-panel");
+  els.pokeprogressBody = document.getElementById("pokeprogress-body");
+  els.pokeprogressBack = document.getElementById("pokeprogress-back");
+
+  function closePokeprogressPanel() {
+    if (els.pokeprogressPanel) els.pokeprogressPanel.hidden = true;
+  }
+
+  async function openPokeprogressPanel() {
+    if (!els.pokeprogressPanel || !els.pokeprogressBody) {
+      toast("Progresión no disponible");
+      return;
+    }
+    closeSysHub();
+    hideAllPokeScreens();
+    els.pokeprogressPanel.hidden = false;
+    await renderPokeprogressPanel();
+  }
+
+  function progressStat(icon, label, value) {
+    return `<div class="integration-row integration-row--stub">
+      <span class="integration-ico">${icon}</span>
+      <span class="integration-info">
+        <span class="integration-name">${escHtml(label)}</span>
+        <span class="integration-detail poke-num">${escHtml(value)}</span>
+      </span>
+    </div>`;
+  }
+
+  async function renderPokeprogressPanel() {
+    els.pokeprogressBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const p = await api("/api/pokemon/progression").catch(() => null);
+    if (!p) {
+      els.pokeprogressBody.innerHTML = `<p class="tagline">No se pudo cargar la progresión.</p>`;
+      return;
+    }
+    const xpPct = Math.max(0, Math.min(100, Math.round((p.xpIntoLevel / p.xpForNextLevel) * 100)));
+    els.pokeprogressBody.innerHTML = `
+      <div class="integration-row integration-row--stub" style="flex-wrap:wrap;gap:8px">
+        <span class="integration-ico">🎓</span>
+        <span class="integration-info">
+          <span class="integration-name poke-title">Nivel de Entrenador <span class="poke-num">${p.trainerLevel}</span></span>
+          <span class="integration-detail poke-num">${p.xpIntoLevel}/${p.xpForNextLevel} XP para el siguiente nivel</span>
+          <div style="background:#222;border-radius:4px;height:8px;overflow:hidden;margin:4px 0;max-width:220px"><div style="width:${xpPct}%;height:100%;background:linear-gradient(90deg,var(--poke-accent),var(--poke-green))"></div></div>
+        </span>
+      </div>
+      <div class="integrations-list">
+        ${progressStat("📖", "Pokédex", `${p.pokedex.caught} capturados / ${p.pokedex.seen} vistos / ${p.pokedex.total} totales`)}
+        ${progressStat("🗺️", "Zonas descubiertas", `${p.areasDiscovered.unlocked}/${p.areasDiscovered.total}`)}
+        ${progressStat("🎒", "Pokémon capturados", `${p.pokemonCaught}`)}
+        ${progressStat("⚔️", "Combates", `${p.battles.won} ganados · ${p.battles.lost} perdidos`)}
+        ${progressStat("🎖️", "Medallas", `${p.badges.earned}/${p.badges.total}`)}
+        ${progressStat("💰", "Poké$", `${p.money}`)}
+        ${progressStat("🏆", "Logros", p.achievements.note)}
+      </div>
+    `;
+  }
+
+  els.pokeprogressBack?.addEventListener("click", () => {
+    closePokeprogressPanel();
+    setAppNav("servicios");
+  });
+  els.pokeprogressPanel?.addEventListener("click", (e) => {
+    if (e.target === els.pokeprogressPanel) {
+      closePokeprogressPanel();
+      setAppNav("servicios");
+    }
+  });
+
+  // 7.8.34/7.8.44 (KAN-367/KAN-377) - eventos reales: activo/pendiente
+  // + cuenta atrás real (fase lunar real / día de la semana real del
+  // propio Pi), nunca un texto inventado.
+  els.pokeeventsPanel = document.getElementById("pokeevents-panel");
+  els.pokeeventsBody = document.getElementById("pokeevents-body");
+  els.pokeeventsBack = document.getElementById("pokeevents-back");
+
+  function closePokeeventsPanel() {
+    if (els.pokeeventsPanel) els.pokeeventsPanel.hidden = true;
+  }
+
+  async function openPokeeventsPanel() {
+    if (!els.pokeeventsPanel || !els.pokeeventsBody) {
+      toast("Eventos no disponible");
+      return;
+    }
+    closeSysHub();
+    hideAllPokeScreens();
+    els.pokeeventsPanel.hidden = false;
+    await renderPokeeventsPanel();
+  }
+
+  function formatHours(h) {
+    if (h == null) return "";
+    const totalMinutes = Math.round(h * 60);
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    if (days > 0) return `${days}d ${hours}h`;
+    const minutes = totalMinutes % 60;
+    if (hours > 0) return `${hours}h ${minutes}min`;
+    return `${minutes}min`;
+  }
+
+  async function renderPokeeventsPanel() {
+    els.pokeeventsBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const data = await api("/api/pokemon/events").catch(() => null);
+    if (!data) {
+      els.pokeeventsBody.innerHTML = `<p class="tagline">No se pudieron cargar los eventos.</p>`;
+      return;
+    }
+    const rows = (data.events || [])
+      .map((e) => {
+        const statusHtml = e.active
+          ? `<span style="color:var(--poke-green);font-weight:600">🟢 Activo ahora · termina en ${formatHours(e.endsInHours)}</span>`
+          : `<span style="color:#8aa0b5">⚪ Inactivo · empieza en ${formatHours(e.startsInHours)}</span>`;
+        return `<div class="poke-hero" style="margin-bottom:10px${e.active ? ";border-color:rgba(124,255,107,0.4)" : ""}">
+          <div class="poke-hero-avatar">${e.emoji}</div>
+          <div class="poke-hero-info">
+            <div class="poke-hero-name poke-title">${escHtml(e.name)}</div>
+            <div class="poke-hero-rank">${escHtml(e.description)}</div>
+            <p class="tagline" style="margin:4px 0 0">${statusHtml}</p>
+          </div>
+        </div>`;
+      })
+      .join("");
+    els.pokeeventsBody.innerHTML = rows || `<p class="tagline">No hay eventos configurados.</p>`;
+  }
+
+  els.pokeeventsBack?.addEventListener("click", () => {
+    closePokeeventsPanel();
+    setAppNav("servicios");
+  });
+  els.pokeeventsPanel?.addEventListener("click", (e) => {
+    if (e.target === els.pokeeventsPanel) {
+      closePokeeventsPanel();
+      setAppNav("servicios");
+    }
+  });
+
+  // 7.8.46 (KAN-379) - Cajas real: hasta ahora la mecánica real ya
+  // existía en el backend (guardar/sacar del equipo real) pero no
+  // tenía panel real todavía - se construye aquí de cero con el
+  // estilo ya compartido, no es un reestilizado de algo que ya
+  // existiera.
+  els.pokeboxPanel = document.getElementById("pokebox-panel");
+  els.pokeboxBody = document.getElementById("pokebox-body");
+  els.pokeboxBack = document.getElementById("pokebox-back");
+
+  function closePokeboxPanel() {
+    if (els.pokeboxPanel) els.pokeboxPanel.hidden = true;
+  }
+
+  async function openPokeboxPanel() {
+    if (!els.pokeboxPanel || !els.pokeboxBody) {
+      toast("Cajas no disponible");
+      return;
+    }
+    closeSysHub();
+    hideAllPokeScreens();
+    els.pokeboxPanel.hidden = false;
+    await renderPokeboxPanel();
+  }
+
+  async function renderPokeboxPanel() {
+    els.pokeboxBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    const [storageData, dexData, teamData] = await Promise.all([
+      api("/api/pokemon/storage").catch(() => ({ boxes: {} })),
+      api("/api/pokemon/dex").catch(() => ({ entries: [] })),
+      api("/api/pokemon/team").catch(() => ({ team: [], max: 6 })),
+    ]);
+    const namesByDex = {};
+    for (const e of dexData.entries || []) namesByDex[e.dexNumber] = e;
+    const teamFull = (teamData.team || []).length >= (teamData.max || 6);
+    const boxes = storageData.boxes || {};
+    const boxNames = Object.keys(boxes);
+    const sectionsHtml = boxNames
+      .map((boxName) => {
+        const individuals = boxes[boxName] || [];
+        const rows = individuals
+          .map((p) => {
+            const sp = namesByDex[p.dexNumber];
+            const label = sp && sp.name !== "???" ? escHtml(sp.name) : `#${String(p.dexNumber).padStart(3, "0")}`;
+            return `<div class="poke-list-card">
+              <div class="poke-list-card-avatar">${spriteImg(sp && sp.sprites, p.shiny ? "frontShiny" : "front", sp ? sp.emoji : "❓", 28)}</div>
+              <div class="poke-list-card-body">
+                <div class="poke-list-card-title">${p.shiny ? "✨ " : ""}${label} · Nv.${p.level}</div>
+                <div class="poke-list-card-sub">${escHtml(p.nature || "")}${p.healthTier ? " · " + escHtml(p.healthTier) : ""}</div>
+              </div>
+              <button type="button" class="dk-btn ghost" data-pokebox-to-team="${escHtml(p.instanceId)}"${teamFull ? " disabled" : ""}>${teamFull ? "Equipo lleno" : "➡️ Al equipo"}</button>
+            </div>`;
+          })
+          .join("");
+        return `<p class="tagline" style="margin:14px 0 6px;font-weight:600">📦 ${escHtml(boxName)} (${individuals.length})</p>${rows || `<p class="tagline">Vacía.</p>`}`;
+      })
+      .join("");
+    els.pokeboxBody.innerHTML = sectionsHtml || `<p class="tagline">No tienes cajas todavía.</p>`;
+    els.pokeboxBody.querySelectorAll("[data-pokebox-to-team]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        doPokeboxToTeam(btn.getAttribute("data-pokebox-to-team")).catch((err) => toast(err.message || "Error"));
+      });
+    });
+  }
+
+  async function doPokeboxToTeam(instanceId) {
+    const result = await api(`/api/pokemon/team/${instanceId}`, { method: "POST" }).catch((err) => {
+      toast(err.message || "Error");
+      return null;
+    });
+    if (result) {
+      toast("Movido a tu equipo real.");
+      await renderPokeboxPanel();
+    }
+  }
+
+  els.pokeboxBack?.addEventListener("click", () => {
+    closePokeboxPanel();
+    setAppNav("servicios");
+  });
+  els.pokeboxPanel?.addEventListener("click", (e) => {
+    if (e.target === els.pokeboxPanel) {
+      closePokeboxPanel();
+      setAppNav("servicios");
+    }
+  });
 
   els.securityCenterBack?.addEventListener("click", () => {
     closeSecurityCenterPanel();
@@ -11373,6 +15958,639 @@
   els.securityCenterPanel?.addEventListener("click", (e) => {
     if (e.target === els.securityCenterPanel) {
       closeSecurityCenterPanel();
+      openSysHub();
+    }
+  });
+
+  // 7.4.17 - Mapa de Infraestructura: Internet -> Router -> dispositivos ->
+  // Docker, sobre datos ya reales (deviceAgentService/dockerService). Arbol
+  // indentado reutilizando las cajas .wf-box del visor de flowcharts (6.5.5)
+  // en vez de inventar un componente de grafo nuevo.
+  els.infraMapPanel = document.getElementById("infra-map-panel");
+  els.infraMapBody = document.getElementById("infra-map-body");
+  els.infraMapBack = document.getElementById("infra-map-back");
+
+  function infraMapNodeHtml(node, depth) {
+    const indent = depth > 0 ? `style="margin-left:${Math.min(depth, 6) * 16}px"` : "";
+    const cls = depth === 0 ? "wf-box wf-trigger" : depth <= 2 ? "wf-box" : "wf-box wf-branch";
+    const detail = node.detail ? `<div class="wf-box-detail">${escHtml(node.detail)}</div>` : "";
+    const self = `<div class="${cls}" ${indent}>${escHtml(node.icon || "•")} <strong>${escHtml(node.label)}</strong>${detail}</div>`;
+    const children = (node.children || []).map((c) => infraMapNodeHtml(c, depth + 1)).join("");
+    return self + children;
+  }
+
+  function closeInfraMapPanel() {
+    if (els.infraMapPanel) els.infraMapPanel.hidden = true;
+  }
+
+  async function openInfraMapPanel() {
+    if (!els.infraMapPanel || !els.infraMapBody) {
+      toast("Mapa de Infraestructura no disponible");
+      return;
+    }
+    closeSysHub();
+    els.infraMapPanel.hidden = false;
+    els.infraMapBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+
+    const map = await api("/api/system/infrastructure-map").catch(() => null);
+    if (!map || !map.root) {
+      els.infraMapBody.innerHTML = `<p class="tagline">No se pudo cargar el mapa.</p>`;
+      return;
+    }
+    els.infraMapBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">Topología real del ecosistema BMO.</p>
+      <div class="wf-flow">${infraMapNodeHtml(map.root, 0)}</div>
+    `;
+  }
+
+  els.infraMapBack?.addEventListener("click", () => {
+    closeInfraMapPanel();
+    openSysHub();
+  });
+  els.infraMapPanel?.addEventListener("click", (e) => {
+    if (e.target === els.infraMapPanel) {
+      closeInfraMapPanel();
+      openSysHub();
+    }
+  });
+
+  // 7.4.24 (KAN-244) - Modo Offline: estado unico y real de que sigue
+  // funcionando sin Internet y que externo queda marcado no disponible,
+  // sobre offlineModeService.js. No cambia ningun comportamiento, solo lo
+  // hace visible (mismas filas .integration-row que Security Center).
+  els.offlineStatusPanel = document.getElementById("offline-status-panel");
+  els.offlineStatusBody = document.getElementById("offline-status-body");
+  els.offlineStatusBack = document.getElementById("offline-status-back");
+
+  function offlineRowHtml(item) {
+    const dot = item.available ? "🟢" : "🔴";
+    return `<div class="integration-row integration-row--stub">
+      <span class="integration-ico">${dot}</span>
+      <span class="integration-info">
+        <span class="integration-name">${escHtml(item.label)}</span>
+        <span class="integration-detail">${escHtml(item.note || (item.available ? "disponible" : "no disponible"))}</span>
+      </span>
+    </div>`;
+  }
+
+  function closeOfflineStatusPanel() {
+    if (els.offlineStatusPanel) els.offlineStatusPanel.hidden = true;
+  }
+
+  async function openOfflineStatusPanel() {
+    if (!els.offlineStatusPanel || !els.offlineStatusBody) {
+      toast("Modo Offline no disponible");
+      return;
+    }
+    closeSysHub();
+    els.offlineStatusPanel.hidden = false;
+    els.offlineStatusBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+
+    const status = await api("/api/system/offline-status").catch(() => null);
+    if (!status) {
+      els.offlineStatusBody.innerHTML = `<p class="tagline">No se pudo cargar el estado.</p>`;
+      return;
+    }
+    const headline = status.online
+      ? "🟢 Con Internet — todo disponible."
+      : "🔴 Sin Internet — funcionando en modo local.";
+    const external = (status.externalServices || []).map(offlineRowHtml).join("");
+    const local = (status.localServices || []).map(offlineRowHtml).join("");
+    els.offlineStatusBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">${headline}</p>
+      <h3 style="margin:10px 0 4px">Externos (necesitan Internet)</h3>
+      <div class="integrations-list">${external}</div>
+      <h3 style="margin:14px 0 4px">Locales (siguen funcionando en LAN)</h3>
+      <div class="integrations-list">${local}</div>
+    `;
+  }
+
+  els.offlineStatusBack?.addEventListener("click", () => {
+    closeOfflineStatusPanel();
+    openSysHub();
+  });
+  els.offlineStatusPanel?.addEventListener("click", (e) => {
+    if (e.target === els.offlineStatusPanel) {
+      closeOfflineStatusPanel();
+      openSysHub();
+    }
+  });
+
+  // 7.4.29 (KAN-249) - Ecosistema BMO: los 7 bloques del mockup del spec
+  // (Sistema/Dispositivos/Servicios/Proyectos/Docker/Red/Seguridad) en una
+  // sola vista, sobre ecosystemCoreService.getEcosystemOverview() ya real
+  // (7.4.1/KAN-221, ampliado en 7.4.29 con network/security) - sin
+  // duplicar ninguna pestaña existente, solo consolidarlas visualmente.
+  els.ecoDashboardPanel = document.getElementById("eco-dashboard-panel");
+  els.ecoDashboardBody = document.getElementById("eco-dashboard-body");
+  els.ecoDashboardBack = document.getElementById("eco-dashboard-back");
+  // 7.5.4 (KAN-255) - Modos Personales: superficie de UI directa que faltaba
+  // para configurationProfilesService.js (7.0.9) - hasta ahora solo se
+  // aplicaba un perfil via escenas/automatizaciones o la IA, nunca a mano
+  // desde la interfaz.
+  els.modosPanel = document.getElementById("modos-panel");
+  els.modosBody = document.getElementById("modos-body");
+  els.modosBack = document.getElementById("modos-back");
+
+  function ecoTileHtml(icon, title, lines) {
+    return `<div class="wf-box" style="text-align:left">
+      <div>${icon} <strong>${escHtml(title)}</strong></div>
+      ${lines.map((l) => `<div class="wf-box-detail">${escHtml(l)}</div>`).join("")}
+    </div>`;
+  }
+
+  function closeEcoDashboardPanel() {
+    if (els.ecoDashboardPanel) els.ecoDashboardPanel.hidden = true;
+  }
+
+  async function openEcoDashboardPanel() {
+    if (!els.ecoDashboardPanel || !els.ecoDashboardBody) {
+      toast("Ecosistema BMO no disponible");
+      return;
+    }
+    closeSysHub();
+    els.ecoDashboardPanel.hidden = false;
+    els.ecoDashboardBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+
+    const o = await api("/api/system/ecosystem-overview").catch(() => null);
+    if (!o) {
+      els.ecoDashboardBody.innerHTML = `<p class="tagline">No se pudo cargar el ecosistema.</p>`;
+      return;
+    }
+    const tiles = [
+      ecoTileHtml("⚙️", "Sistema", [`Perfil activo: ${o.activeProfile || "—"}`, `Actualizado: ${formatHistoryWhen(o.updatedAt)}`]),
+      ecoTileHtml("📟", "Dispositivos", o.devices ? [`${o.devices.online}/${o.devices.total} online`] : ["Sin datos"]),
+      ecoTileHtml("🩺", "Servicios", o.health ? [`Estado: ${o.health.overallStatus}`, `${o.health.items} comprobaciones`] : ["Sin datos"]),
+      ecoTileHtml("📁", "Proyectos", o.projects ? [`${o.projects.total} proyecto(s)`] : ["Sin datos"]),
+      ecoTileHtml("🐳", "Docker", o.docker ? [`${o.docker.running}/${o.docker.containers} contenedores activos`] : ["Sin datos"]),
+      ecoTileHtml("📡", "Red", o.network ? [o.network.online ? "Con Internet" : "Sin Internet"] : ["Sin datos"]),
+      ecoTileHtml("🛡️", "Seguridad", o.security ? [`${o.security.green || 0} 🟢 · ${o.security.yellow || 0} 🟡 · ${o.security.red || 0} 🔴`] : ["Sin datos"]),
+    ];
+    els.ecoDashboardBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">Vista consolidada real del ecosistema BMO.</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">${tiles.join("")}</div>
+    `;
+  }
+
+  els.ecoDashboardBack?.addEventListener("click", () => {
+    closeEcoDashboardPanel();
+    openSysHub();
+  });
+  els.ecoDashboardPanel?.addEventListener("click", (e) => {
+    if (e.target === els.ecoDashboardPanel) {
+      closeEcoDashboardPanel();
+      openSysHub();
+    }
+  });
+
+  // 7.5.4 (KAN-255) - Modos Personales
+  function closeModosPanel() {
+    if (els.modosPanel) els.modosPanel.hidden = true;
+  }
+
+  async function openModosPanel() {
+    if (!els.modosPanel || !els.modosBody) {
+      toast("Modos Personales no disponible");
+      return;
+    }
+    closeSysHub();
+    els.modosPanel.hidden = false;
+    els.modosBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+
+    const data = await api("/api/profiles").catch(() => null);
+    if (!data) {
+      els.modosBody.innerHTML = `<p class="tagline">No se pudieron cargar los modos.</p>`;
+      return;
+    }
+    const profiles = data.profiles || [];
+    const active = data.active;
+    els.modosBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">Aplica un modo real a todo BMO de una vez: autonomía, cámara, IA, privacidad, avisos y tono.</p>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        ${profiles
+          .map((p) => {
+            const isActive = p.id === active;
+            return `<div class="docker-actions" style="justify-content:space-between${isActive ? ";border-color:var(--accent, #6cf)" : ""}">
+              <span style="flex:1">${escHtml(p.settings?.label || p.label || p.id)}${isActive ? " · <strong>activo</strong>" : ""}</span>
+              <button type="button" class="dk-btn ${isActive ? "ghost" : "primary"}" data-modo-apply="${escHtml(p.id)}" ${isActive ? "disabled" : ""}>${isActive ? "Activo" : "Aplicar"}</button>
+            </div>`;
+          })
+          .join("") || `<p class="sic-sub">No hay modos configurados.</p>`}
+      </div>
+    `;
+    els.modosBody.querySelectorAll("[data-modo-apply]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const name = btn.getAttribute("data-modo-apply");
+        btn.disabled = true;
+        try {
+          await api("/api/profiles/apply", { method: "POST", body: JSON.stringify({ name }) });
+          toast(`Modo "${name}" aplicado`);
+          openModosPanel();
+        } catch (err) {
+          toast(err.message || "Error al aplicar el modo");
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
+  els.modosBack?.addEventListener("click", () => {
+    closeModosPanel();
+    openSysHub();
+  });
+  els.modosPanel?.addEventListener("click", (e) => {
+    if (e.target === els.modosPanel) {
+      closeModosPanel();
+      openSysHub();
+    }
+  });
+
+  // 7.5.6/7.5.7 (KAN-257/258) - Mi Espacio Personal: Dashboard + Command
+  // Center consolidados en UN panel con pestañas (mismo criterio de reuso
+  // que 7.0.16/17 con BMO Brain) en vez de 8 paneles sueltos - cada
+  // pestaña es la superficie directa de un servicio de 7.5 que antes solo
+  // existia en el backend.
+  els.personalPanel = document.getElementById("personal-panel");
+  els.personalBody = document.getElementById("personal-body");
+  els.personalBack = document.getElementById("personal-back");
+  state.personalTab = "resumen";
+  state.personalProjectView = null;
+
+  function closePersonalPanel() {
+    if (els.personalPanel) els.personalPanel.hidden = true;
+  }
+
+  async function openPersonalPanel(tab) {
+    if (!els.personalPanel || !els.personalBody) {
+      toast("Mi Espacio Personal no disponible");
+      return;
+    }
+    closeSysHub();
+    els.personalPanel.hidden = false;
+    if (tab) state.personalTab = tab;
+    state.personalProjectView = null;
+    document.querySelectorAll("[data-personal-tab]").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.personalTab === state.personalTab);
+    });
+    await renderPersonalTab();
+  }
+
+  async function renderPersonalTab() {
+    if (!els.personalBody) return;
+    els.personalBody.innerHTML = `<p class="tagline">Cargando…</p>`;
+    try {
+      if (state.personalTab === "resumen") await renderPersonalResumen();
+      else if (state.personalTab === "tareas") await renderPersonalTareas();
+      else if (state.personalTab === "proyectos") await renderPersonalProyectos();
+      else if (state.personalTab === "notas") await renderPersonalNotas();
+      else if (state.personalTab === "decisiones") await renderPersonalDecisiones();
+      else if (state.personalTab === "rutinas") await renderPersonalRutinas();
+      else if (state.personalTab === "calendario") await renderPersonalCalendario();
+      else if (state.personalTab === "analitica") await renderPersonalAnalitica();
+      else if (state.personalTab === "privacidad") await renderPersonalPrivacidad();
+    } catch (err) {
+      els.personalBody.innerHTML = `<p class="tagline">Error: ${escHtml(err.message || "desconocido")}</p>`;
+    }
+  }
+
+  async function renderPersonalResumen() {
+    const o = await api("/api/personal/overview");
+    const t = o.tasks || {};
+    const tiles = [
+      ecoTileHtml("👤", "Perfil", [o.profile?.name || "Sin nombre", `Modo activo: ${o.activeProfile || "—"}`]),
+      ecoTileHtml("✅", "Tareas", [`${t.pendientes || 0} pendientes`, `${t.urgentes || 0} urgentes · ${t.programadas || 0} programadas`]),
+      ecoTileHtml("📁", "Proyectos", [`${o.projects?.total || 0} proyecto(s)`]),
+      ecoTileHtml("🗒️", "Notas", [`${o.notes?.total || 0} nota(s)`]),
+      ecoTileHtml("⚖️", "Decisiones", [`${o.decisions?.total || 0} registrada(s)`]),
+      ecoTileHtml("🧭", "Rutinas", [`${o.routines?.total || 0} configurada(s)`]),
+    ];
+    els.personalBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">Tu resumen personal real en BMO.</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:14px">${tiles.join("")}</div>
+      <div class="docker-actions" style="gap:8px">
+        <input type="text" id="personal-quick-task" placeholder="Añadir tarea rápida (ej: comprar pan mañana)" style="flex:1" />
+        <button type="button" class="dk-btn primary" id="personal-quick-task-add">Añadir</button>
+      </div>
+    `;
+    document.getElementById("personal-quick-task-add")?.addEventListener("click", async () => {
+      const input = document.getElementById("personal-quick-task");
+      const text = input?.value?.trim();
+      if (!text) return;
+      try {
+        await api("/api/personal/tasks", { method: "POST", body: JSON.stringify({ text }) });
+        if (input) input.value = "";
+        toast("Tarea añadida");
+        await renderPersonalResumen();
+      } catch (err) {
+        toast(err.message || "Error al añadir");
+      }
+    });
+  }
+
+  function taskRowHtml(t) {
+    const prioIcon = { high: "🔴", medium: "🟡", low: "🟢" }[t.priority] || "🟡";
+    const due = t.dueAt ? new Date(t.dueAt).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : null;
+    return `<div class="docker-actions" style="justify-content:space-between;margin-bottom:6px;opacity:${t.status === "done" ? 0.55 : 1}">
+      <label style="flex:1;display:flex;gap:8px;align-items:center;cursor:pointer">
+        <input type="checkbox" data-task-toggle="${t.id}" ${t.status === "done" ? "checked" : ""} />
+        <span>${prioIcon} ${escHtml(t.text)}${due ? ` <span class="sic-sub">· ${due}</span>` : ""}${t.tags?.length ? ` <span class="sic-sub">#${t.tags.map(escHtml).join(" #")}</span>` : ""}</span>
+      </label>
+      <button type="button" class="dk-btn danger" data-task-delete="${t.id}">🗑️</button>
+    </div>`;
+  }
+
+  async function renderPersonalTareas() {
+    const { tasks } = await api("/api/personal/tasks");
+    const pending = tasks.filter((t) => t.status === "pending");
+    const done = tasks.filter((t) => t.status === "done");
+    els.personalBody.innerHTML = `
+      <div class="docker-actions" style="gap:8px;margin-bottom:10px">
+        <input type="text" id="personal-task-input" placeholder="Nueva tarea (entiende 'mañana', 'viernes', 'urgente'…)" style="flex:1" />
+        <button type="button" class="dk-btn primary" id="personal-task-add">Añadir</button>
+      </div>
+      <p class="sic-sub">Pendientes (${pending.length})</p>
+      ${pending.map(taskRowHtml).join("") || `<p class="sic-sub">Sin tareas pendientes</p>`}
+      ${done.length ? `<p class="sic-sub" style="margin-top:10px">Completadas (${done.length})</p>${done.slice(0, 20).map(taskRowHtml).join("")}` : ""}
+    `;
+    document.getElementById("personal-task-add")?.addEventListener("click", async () => {
+      const input = document.getElementById("personal-task-input");
+      const text = input?.value?.trim();
+      if (!text) return;
+      try {
+        await api("/api/personal/tasks", { method: "POST", body: JSON.stringify({ text }) });
+        if (input) input.value = "";
+        await renderPersonalTareas();
+      } catch (err) {
+        toast(err.message || "Error al añadir");
+      }
+    });
+    els.personalBody.querySelectorAll("[data-task-toggle]").forEach((cb) => {
+      cb.addEventListener("change", async () => {
+        const id = cb.getAttribute("data-task-toggle");
+        try {
+          await api(`/api/personal/tasks/${id}/${cb.checked ? "complete" : "uncomplete"}`, { method: "POST", body: "{}" });
+          await renderPersonalTareas();
+        } catch (err) {
+          toast(err.message || "Error");
+        }
+      });
+    });
+    els.personalBody.querySelectorAll("[data-task-delete]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/personal/tasks/${btn.getAttribute("data-task-delete")}`, { method: "DELETE" });
+          await renderPersonalTareas();
+        } catch (err) {
+          toast(err.message || "Error");
+        }
+      });
+    });
+  }
+
+  async function renderPersonalProyectos() {
+    if (state.personalProjectView) {
+      return renderPersonalProjectWorkspace(state.personalProjectView);
+    }
+    const { projects } = await api("/api/personal/projects");
+    els.personalBody.innerHTML = `
+      <div class="docker-actions" style="margin-bottom:10px">
+        <button type="button" class="dk-btn primary" id="personal-project-add">➕ Nuevo proyecto</button>
+      </div>
+      ${
+        projects
+          .map(
+            (p) => `<div class="docker-actions" style="justify-content:space-between;margin-bottom:6px">
+        <button type="button" class="dk-btn ghost" data-project-open="${escHtml(p.id)}" style="flex:1;text-align:left">📁 ${escHtml(p.name)}${p.status ? ` <span class="sic-sub">· ${escHtml(p.status)}</span>` : ""}</button>
+      </div>`
+          )
+          .join("") || `<p class="sic-sub">Sin proyectos todavía</p>`
+      }
+    `;
+    document.getElementById("personal-project-add")?.addEventListener("click", async () => {
+      const name = window.prompt("Nombre del proyecto:");
+      if (!name?.trim()) return;
+      try {
+        await api("/api/personal/projects", { method: "POST", body: JSON.stringify({ name: name.trim() }) });
+        await renderPersonalProyectos();
+      } catch (err) {
+        toast(err.message || "Error al crear");
+      }
+    });
+    els.personalBody.querySelectorAll("[data-project-open]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.personalProjectView = btn.getAttribute("data-project-open");
+        renderPersonalProjectWorkspace(state.personalProjectView);
+      });
+    });
+  }
+
+  async function renderPersonalProjectWorkspace(id) {
+    const ws = await api(`/api/personal/projects/${encodeURIComponent(id)}`);
+    els.personalBody.innerHTML = `
+      <button type="button" class="dk-btn ghost" id="personal-project-back">← Proyectos</button>
+      <h3 style="margin:10px 0 4px">📁 ${escHtml(ws.project.name)}</h3>
+      <p class="sic-sub" style="margin:0 0 10px">${escHtml(ws.project.description || "Sin descripción")}</p>
+      <p class="sic-sub">Tareas del proyecto (${ws.tasks.length})</p>
+      ${ws.tasks.map(taskRowHtml).join("") || `<p class="sic-sub">Ninguna</p>`}
+      <p class="sic-sub" style="margin-top:10px">Notas del proyecto (${ws.notes.length})</p>
+      ${ws.notes.map((n) => `<div class="wf-box" style="text-align:left;margin-bottom:6px">🗒️ <strong>${escHtml(n.title || "(sin título)")}</strong><div class="wf-box-detail">${escHtml(n.body.slice(0, 140))}</div></div>`).join("") || `<p class="sic-sub">Ninguna</p>`}
+      <p class="sic-sub" style="margin-top:10px">Decisiones del proyecto (${ws.decisions.length})</p>
+      ${ws.decisions.map((d) => `<div class="wf-box" style="text-align:left;margin-bottom:6px">⚖️ <strong>${escHtml(d.title)}</strong><div class="wf-box-detail">${escHtml(d.decision)}</div></div>`).join("") || `<p class="sic-sub">Ninguna</p>`}
+    `;
+    document.getElementById("personal-project-back")?.addEventListener("click", () => {
+      state.personalProjectView = null;
+      renderPersonalProyectos();
+    });
+  }
+
+  async function renderPersonalNotas() {
+    const { notes } = await api("/api/personal/notes");
+    els.personalBody.innerHTML = `
+      <div class="docker-actions" style="margin-bottom:10px">
+        <button type="button" class="dk-btn primary" id="personal-note-add">➕ Nueva nota</button>
+      </div>
+      ${
+        notes
+          .map(
+            (n) => `<div class="docker-actions" style="justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+        <div class="wf-box" style="text-align:left;flex:1">🗒️ <strong>${escHtml(n.title || "(sin título)")}</strong><div class="wf-box-detail">${escHtml(n.body.slice(0, 160))}</div></div>
+        <button type="button" class="dk-btn danger" data-note-delete="${n.id}">🗑️</button>
+      </div>`
+          )
+          .join("") || `<p class="sic-sub">Sin notas todavía</p>`
+      }
+    `;
+    document.getElementById("personal-note-add")?.addEventListener("click", async () => {
+      const title = window.prompt("Título de la nota:") || "";
+      const body = window.prompt("Contenido:") || "";
+      if (!title.trim() && !body.trim()) return;
+      try {
+        await api("/api/personal/notes", { method: "POST", body: JSON.stringify({ title, body }) });
+        await renderPersonalNotas();
+      } catch (err) {
+        toast(err.message || "Error al crear");
+      }
+    });
+    els.personalBody.querySelectorAll("[data-note-delete]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/personal/notes/${btn.getAttribute("data-note-delete")}`, { method: "DELETE" });
+          await renderPersonalNotas();
+        } catch (err) {
+          toast(err.message || "Error");
+        }
+      });
+    });
+  }
+
+  async function renderPersonalDecisiones() {
+    const { decisions } = await api("/api/personal/decisions");
+    els.personalBody.innerHTML = `
+      <div class="docker-actions" style="margin-bottom:10px">
+        <button type="button" class="dk-btn primary" id="personal-decision-add">➕ Nueva decisión</button>
+      </div>
+      ${
+        decisions
+          .map(
+            (d) => `<div class="docker-actions" style="justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+        <div class="wf-box" style="text-align:left;flex:1">⚖️ <strong>${escHtml(d.title)}</strong><div class="wf-box-detail">${escHtml(d.decision)}</div>${d.context ? `<div class="wf-box-detail">Contexto: ${escHtml(d.context)}</div>` : ""}</div>
+        <button type="button" class="dk-btn danger" data-decision-delete="${d.id}">🗑️</button>
+      </div>`
+          )
+          .join("") || `<p class="sic-sub">Sin decisiones registradas</p>`
+      }
+    `;
+    document.getElementById("personal-decision-add")?.addEventListener("click", async () => {
+      const title = window.prompt("¿Qué se decidió (título)?") || "";
+      const decision = window.prompt("¿Cuál fue la decisión?") || "";
+      if (!title.trim() || !decision.trim()) return;
+      try {
+        await api("/api/personal/decisions", { method: "POST", body: JSON.stringify({ title, decision }) });
+        await renderPersonalDecisiones();
+      } catch (err) {
+        toast(err.message || "Error al crear");
+      }
+    });
+    els.personalBody.querySelectorAll("[data-decision-delete]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/personal/decisions/${btn.getAttribute("data-decision-delete")}`, { method: "DELETE" });
+          await renderPersonalDecisiones();
+        } catch (err) {
+          toast(err.message || "Error");
+        }
+      });
+    });
+  }
+
+  async function renderPersonalRutinas() {
+    const { routines } = await api("/api/personal/routines");
+    els.personalBody.innerHTML = routines
+      .map(
+        (r) => `<div class="docker-actions" style="justify-content:space-between;margin-bottom:6px">
+      <span style="flex:1">${escHtml(r.icon || "🧭")} ${escHtml(r.name)} <span class="sic-sub">(${r.steps.length} paso(s))</span></span>
+      <button type="button" class="dk-btn primary" data-routine-run="${escHtml(r.id)}">▶️ Ejecutar</button>
+    </div>`
+      )
+      .join("");
+    els.personalBody.querySelectorAll("[data-routine-run]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          const result = await api(`/api/personal/routines/${btn.getAttribute("data-routine-run")}/run`, { method: "POST", body: "{}" });
+          const ok = result.results.filter((r) => r.ok).length;
+          toast(`Rutina "${result.routine}" ejecutada (${ok}/${result.results.length} pasos ok)`);
+        } catch (err) {
+          toast(err.message || "Error al ejecutar");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
+  async function renderPersonalCalendario() {
+    const data = await api("/api/personal/calendar").catch((err) => ({ error: err.message }));
+    if (data.error) {
+      els.personalBody.innerHTML = `<p class="tagline">${escHtml(data.error)}</p>`;
+      return;
+    }
+    const fmt = (iso) => {
+      const d = new Date(iso);
+      return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" });
+    };
+    els.personalBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">📅 Próximos eventos de tu Google Calendar (solo lectura, nunca se mezcla con tus tareas).</p>
+      ${
+        data.events
+          .map(
+            (e) => `<div class="wf-box" style="text-align:left;margin-bottom:6px">📅 <strong>${escHtml(e.summary)}</strong><div class="wf-box-detail">${fmt(e.start)}${e.location ? ` · ${escHtml(e.location)}` : ""}</div></div>`
+          )
+          .join("") || `<p class="sic-sub">Sin eventos próximos</p>`
+      }
+    `;
+  }
+
+  async function renderPersonalAnalitica() {
+    const a = await api("/api/personal/analytics");
+    const tiles = [
+      ecoTileHtml("✅", "Tareas", [`${a.tasks.pending} pendientes`, `${a.tasks.completedLast7d} completadas (7d)`, `${a.tasks.completedLast30d} completadas (30d)`]),
+      ecoTileHtml("📁", "Proyectos", [`${a.projects.active}/${a.projects.total} activos`]),
+      ecoTileHtml("🧭", "Rutinas", [`${a.routines.configured} configurada(s)`]),
+      ecoTileHtml("⚙️", "Automatizaciones", [`${a.automations.configured} configurada(s)`]),
+    ];
+    els.personalBody.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">${tiles.join("")}</div>`;
+  }
+
+  async function renderPersonalPrivacidad() {
+    const { categories, aiPrivacyMode } = await api("/api/personal/privacy");
+    els.personalBody.innerHTML = `
+      <p class="tagline" style="margin:0 0 10px">🔒 Mis Datos — qué guarda BMO de ti realmente.</p>
+      ${categories
+        .map(
+          (c) => `<div class="docker-actions" style="justify-content:space-between;margin-bottom:6px">
+        <span>${escHtml(c.label)}</span>
+        <span class="sic-sub">${c.error ? "no disponible" : `${c.count} item(s)`}</span>
+      </div>`
+        )
+        .join("")}
+      <p class="sic-sub" style="margin-top:8px">Modo privacidad IA: ${aiPrivacyMode ? "activado" : "desactivado"}</p>
+      <div class="docker-actions" style="margin-top:14px">
+        <button type="button" class="dk-btn primary" id="personal-export-btn">⬇️ Exportar mis datos (JSON)</button>
+      </div>
+      <pre id="personal-export-output" class="sic-sub" style="white-space:pre-wrap;max-height:240px;overflow:auto;margin-top:10px;display:none;background:rgba(255,255,255,0.04);padding:8px;border-radius:6px"></pre>
+    `;
+    document.getElementById("personal-export-btn")?.addEventListener("click", async () => {
+      try {
+        const data = await api("/api/personal/export");
+        const out = document.getElementById("personal-export-output");
+        if (out) {
+          out.textContent = JSON.stringify(data, null, 2);
+          out.style.display = "block";
+        }
+        toast("Export generado abajo");
+      } catch (err) {
+        toast(err.message || "Error al exportar");
+      }
+    });
+  }
+
+  document.querySelectorAll("[data-personal-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.personalTab = btn.getAttribute("data-personal-tab");
+      state.personalProjectView = null;
+      document.querySelectorAll("[data-personal-tab]").forEach((b) => b.classList.toggle("active", b === btn));
+      renderPersonalTab().catch((err) => toast(err.message || "Error"));
+    });
+  });
+
+  els.personalBack?.addEventListener("click", () => {
+    closePersonalPanel();
+    openSysHub();
+  });
+  els.personalPanel?.addEventListener("click", (e) => {
+    if (e.target === els.personalPanel) {
+      closePersonalPanel();
       openSysHub();
     }
   });
@@ -13988,6 +19206,38 @@
       openRecoveryPanel().catch((err) => toast(err.message || "Error"));
     } else if (kind === "securitycenter") {
       openSecurityCenterPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "pokedex") {
+      openPokedexPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "explore") {
+      openPokemonExplorePanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "pokebag") {
+      openPokebagPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "pokemoves") {
+      openPokemovesPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "pokecare") {
+      openPokecarePanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "pokemonhome") {
+      openPokemonHomePanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "pokemedals") {
+      openPokemedalsPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "pokeevents") {
+      openPokeeventsPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "pokebox") {
+      openPokeboxPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "pokeprogress") {
+      openPokeprogressPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "inframap") {
+      openInfraMapPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "offline") {
+      openOfflineStatusPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "ecodash") {
+      openEcoDashboardPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "modos") {
+      openModosPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "personal") {
+      openPersonalPanel().catch((err) => toast(err.message || "Error"));
+    } else if (kind === "bmovoice") {
+      openBmoVoicePanel();
     } else if (kind === "brain") {
       openBrainPanel().catch((err) => toast(err.message || "Error"));
     }
@@ -14345,7 +19595,9 @@
       if (agentDevices) state.agentDevices = agentDevices;
       if (metricsSnap) state.metricsSnap = metricsSnap;
       // No bloquear el dashboard si Spotify falla
-      await refreshSpotifyStatus().catch(() => {});
+      if (document.getElementById("bmomusic-panel")?.hidden !== false) {
+        await refreshSpotifyStatus().catch(() => {});
+      }
       // No re-renderizar la grid de Servicios mientras el usuario esta
       // reordenando: reconstruiria el DOM desde el array `services` y
       // perderia el arrastre en curso (4.11.2).

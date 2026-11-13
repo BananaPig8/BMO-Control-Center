@@ -10,6 +10,8 @@ load_dotenv()
 HOST = os.environ["BMO_HOST"]
 USER = os.environ["BMO_SSH_USER"]
 PASSWORD = os.environ["BMO_SSH_PASSWORD"]
+API_KEY = os.environ["BMO_API_KEY"]
+API_KEY_PLACEHOLDER = "__BMO_API_KEY__"
 LOCAL = Path(r"C:\Users\manue\Projects\bmo-control-center\dist")
 REMOTE_REL = "bmo-os/ui"
 SKIP_PREFIXES = ("bmo-src", "bmo-raw")
@@ -42,6 +44,15 @@ def main() -> None:
             local_path = Path(root) / name
             remote_path = f"{rdir}/{name}"
             print("put", remote_path)
+            if rel == "." and name == "app.js":
+                # La clave de la API no va en el repo (es público): se
+                # inyecta aquí desde .env al subir a la Pi.
+                text = local_path.read_text(encoding="utf-8")
+                if API_KEY_PLACEHOLDER not in text:
+                    raise SystemExit("dist/app.js no tiene el marcador de la clave; no se despliega")
+                with sftp.open(remote_path, "wb") as fh:
+                    fh.write(text.replace(API_KEY_PLACEHOLDER, API_KEY).encode("utf-8"))
+                continue
             sftp.put(str(local_path), remote_path)
 
     sftp.close()
